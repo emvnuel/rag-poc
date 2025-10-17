@@ -137,7 +137,7 @@ public class DocumentProcessorJob {
             final EmbeddingRequest request = new EmbeddingRequest(embeddingModel, chunkText);
             final EmbeddingResponse response = embeddingClient.embed(request);
             
-            final PGvector vector = convertToPGvector(response.embeddings().getFirst());
+            final PGvector vector = convertToPGvector(response.data().getFirst().embedding());
             final Embedding embedding = new Embedding(document, chunkIndex, chunkText, vector, response.model());
             embeddingRepository.persist(embedding);
             

@@ -8,6 +8,6 @@ import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 public interface LlmEmbeddingClient {
 
     @POST
-    @Path("/api/embed")
+    @Path("/v1/embeddings")
     EmbeddingResponse embed(EmbeddingRequest request);
 }

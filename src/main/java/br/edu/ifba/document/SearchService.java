@@ -42,7 +42,7 @@ public class SearchService {
         final EmbeddingRequest request = new EmbeddingRequest(embeddingModel, query);
         final EmbeddingResponse response = embeddingClient.embed(request);
 
-        final List<Double> embedding = response.embeddings().getFirst();
+        final List<Double> embedding = response.data().getFirst().embedding();
         final String vectorString = convertToVectorString(embedding);
 
         final List<Object[]> results = embeddingRepository.findSimilarEmbeddingsByProject(
