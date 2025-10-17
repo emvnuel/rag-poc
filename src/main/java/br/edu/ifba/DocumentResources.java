@@ -27,7 +27,7 @@ public class DocumentResources {
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @Produces(MediaType.APPLICATION_JSON)
     @Path("/files")
-    public DocumentResponse uploadPdf(@FormParam("file") FileUpload file) {
+    public DocumentResponse upload(@FormParam("file") FileUpload file) {
         if (file == null) {
             throw new FileUploadException("No file uploaded");
         }
