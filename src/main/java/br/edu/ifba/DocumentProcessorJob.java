@@ -37,7 +37,7 @@ public class DocumentProcessorJob {
     public void markDocumentsAsProcessing() {
         LOG.info("Starting document marking job...");
         
-        final List<Document> documents = documentRepository.findNotProcessed(BATCH_SIZE);
+        final List<Document> documents = documentRepository.findNotProcessedWithLock(BATCH_SIZE);
         
         if (documents.isEmpty()) {
             LOG.info("No documents to process.");
@@ -137,6 +137,17 @@ public class DocumentProcessorJob {
             
             LOG.infof("Embedding stored for chunk %d/%d", chunkIndex + 1, totalChunks);
             
+        } catch (org.hibernate.exception.ConstraintViolationException e) {
+            LOG.warnf("Duplicate chunk %d for document %s detected (concurrent processing), skipping", 
+                    chunkIndex, documentId);
+        } catch (jakarta.persistence.PersistenceException e) {
+            if (e.getCause() instanceof org.hibernate.exception.ConstraintViolationException) {
+                LOG.warnf("Duplicate chunk %d for document %s detected (concurrent processing), skipping", 
+                        chunkIndex, documentId);
+            } else {
+                LOG.errorf(e, "Error processing chunk %d of document %s", chunkIndex, documentId);
+                throw e;
+            }
         } catch (Exception e) {
             LOG.errorf(e, "Error processing chunk %d of document %s", chunkIndex, documentId);
             throw e;

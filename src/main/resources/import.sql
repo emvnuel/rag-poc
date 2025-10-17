@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
     chunk_text TEXT NOT NULL,
     vector vector(1024) NOT NULL,
     model VARCHAR(255) NOT NULL,
-    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+    CONSTRAINT uk_embeddings_document_chunk UNIQUE (document_id, chunk_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_document_id ON embeddings(document_id);

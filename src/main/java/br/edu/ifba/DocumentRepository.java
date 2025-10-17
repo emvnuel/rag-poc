@@ -6,6 +6,7 @@ import java.util.UUID;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import io.quarkus.panache.common.Page;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.persistence.LockModeType;
 
 @ApplicationScoped
 public class DocumentRepository implements PanacheRepositoryBase<Document, UUID> {
@@ -25,6 +26,13 @@ public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>
     public List<Document> findNotProcessed(final int limit) {
         return find("status", DocumentStatus.NOT_PROCESSED)
                 .page(Page.ofSize(limit))
+                .list();
+    }
+
+    public List<Document> findNotProcessedWithLock(final int limit) {
+        return find("status = ?1 ORDER BY createdAt", DocumentStatus.NOT_PROCESSED)
+                .page(Page.ofSize(limit))
+                .withLock(LockModeType.PESSIMISTIC_WRITE)
                 .list();
     }
 }
