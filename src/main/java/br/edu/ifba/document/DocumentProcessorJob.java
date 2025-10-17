@@ -15,9 +15,6 @@ import org.jboss.logging.Logger;
 public class DocumentProcessorJob {
 
     private static final Logger LOG = Logger.getLogger(DocumentProcessorJob.class);
-    private static final int BATCH_SIZE = 5;
-    private static final int CHUNK_SIZE = 500;
-    private static final int CHUNKS_PER_BATCH = 50;
 
     @Inject
     DocumentRepository documentRepository;
@@ -32,12 +29,21 @@ public class DocumentProcessorJob {
     @ConfigProperty(name = "embedding.model")
     String embeddingModel;
 
-    @Scheduled(every = "10s")
+    @ConfigProperty(name = "document.processor.batch.size")
+    int batchSize;
+
+    @ConfigProperty(name = "document.processor.chunk.size")
+    int chunkSize;
+
+    @ConfigProperty(name = "document.processor.chunks.per.batch")
+    int chunksPerBatch;
+
+    @Scheduled(every = "{document.processor.schedule.marking}")
     @Transactional
     public void markDocumentsAsProcessing() {
         LOG.info("Starting document marking job...");
         
-        final List<Document> documents = documentRepository.findNotProcessedWithLock(BATCH_SIZE);
+        final List<Document> documents = documentRepository.findNotProcessedWithLock(batchSize);
         
         if (documents.isEmpty()) {
             LOG.info("No documents to process.");
@@ -52,7 +58,7 @@ public class DocumentProcessorJob {
         LOG.info("Document marking job completed.");
     }
 
-    @Scheduled(every = "5s")
+    @Scheduled(every = "{document.processor.schedule.processing}")
     public void processDocumentChunks() {
         LOG.info("Starting chunk processing job...");
         
@@ -76,7 +82,7 @@ public class DocumentProcessorJob {
                 return;
             }
 
-            final List<String> chunks = TextChunker.chunkText(document.getContent(), CHUNK_SIZE);
+            final List<String> chunks = TextChunker.chunkText(document.getContent(), chunkSize);
             LOG.infof("Document %s has %d chunks", documentId, chunks.size());
             
             int startIndex = findNextChunkToProcess(documentId, chunks.size());
@@ -85,7 +91,7 @@ public class DocumentProcessorJob {
                 return;
             }
             
-            int endIndex = Math.min(startIndex + CHUNKS_PER_BATCH, chunks.size());
+            int endIndex = Math.min(startIndex + chunksPerBatch, chunks.size());
             LOG.infof("Processing chunks %d to %d of document %s", startIndex, endIndex - 1, documentId);
             
             for (int i = startIndex; i < endIndex; i++) {

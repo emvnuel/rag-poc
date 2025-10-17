@@ -47,7 +47,7 @@ public class Embedding {
     private String chunkText;
 
     @Type(PGvectorUserType.class)
-    @Column(name = "vector", columnDefinition = "vector(1024)", nullable = false)
+    @Column(name = "vector", columnDefinition = "vector(4096)", nullable = false)
     private PGvector vector;
 
     @Column(nullable = false)

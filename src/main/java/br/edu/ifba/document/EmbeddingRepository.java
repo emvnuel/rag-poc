@@ -47,7 +47,7 @@ public class EmbeddingRepository implements PanacheRepositoryBase<Embedding, UUI
         final Query query = entityManager.createNativeQuery(
                 """
                 SELECT e.id, e.chunk_text, e.chunk_index, d.file_name,
-                       (e.vector <=> CAST(:queryVector AS vector)) as distance
+                       (e.vector <=> CAST(:queryVector AS vector)) as distance, e.document_id
                 FROM embeddings e
                 JOIN documents d ON e.document_id = d.id
                 WHERE d.project_id = :projectId
@@ -62,4 +62,5 @@ public class EmbeddingRepository implements PanacheRepositoryBase<Embedding, UUI
         
         return query.getResultList();
     }
+
 }

@@ -13,6 +13,6 @@ public record SearchRequest(
         @NotNull(message = "Project ID is required")
         UUID projectId,
         
-        @Positive(message = "Limit must be positive")
-        Integer limit) {
+        @Positive(message = "Max results must be positive")
+        Integer maxResults) {
 }

@@ -9,6 +9,7 @@ import java.util.UUID;
 import br.edu.ifba.exception.FileUploadException;
 import br.edu.ifba.exception.PdfProcessingException;
 import br.edu.ifba.project.ProjectService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
@@ -25,17 +26,19 @@ import org.jboss.resteasy.reactive.multipart.FileUpload;
 @Path("/documents")
 public class DocumentResources {
 
-    @Inject
-    DocumentExtractorFactory extractorFactory;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Inject
     DocumentService documentService;
 
     @Inject
-    SearchService searchService;
+    ProjectService projectService;
 
     @Inject
-    ProjectService projectService;
+    DocumentExtractorFactory extractorFactory;
+
+    @Inject
+    SearchService searchService;
 
     @POST
     @Consumes(MediaType.MULTIPART_FORM_DATA)
@@ -90,6 +93,42 @@ public class DocumentResources {
                 .build();
     }
 
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/websites")
+    public Response processWebsite(@Valid final WebsiteRequest request) {
+        if (request.url() == null || request.url().isEmpty()) {
+            throw new IllegalArgumentException("URL is required");
+        }
+
+        if (request.projectId() == null) {
+            throw new IllegalArgumentException("Project ID is required");
+        }
+
+        try {
+            final WebsiteDocumentExtractor extractor = new WebsiteDocumentExtractor();
+            final String text = extractor.fetchAndExtract(request.url());
+            final Map<String, Object> contentMetadata = extractor.fetchAndExtractMetadata(request.url());
+            final String formattedText = TextFormatter.format(text);
+            
+            final String metadata = objectMapper.writeValueAsString(contentMetadata);
+
+            final var project = projectService.findById(request.projectId());
+            final Document document = new Document(DocumentType.WEBSITE, request.url(), formattedText, metadata, project);
+            final Document created = documentService.create(document);
+
+            return Response.created(URI.create("/documents/" + created.getId()))
+                    .entity(new DocumentCreatedResponse(created.getId()))
+                    .build();
+        } catch (IOException e) {
+            throw new PdfProcessingException("Error processing website: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new PdfProcessingException("Website processing interrupted: " + e.getMessage(), e);
+        }
+    }
+
     @GET
     @Path("/{id}")
     @Produces(MediaType.APPLICATION_JSON)
@@ -111,6 +150,6 @@ public class DocumentResources {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public SearchResponse search(@Valid final SearchRequest request) {
-        return searchService.search(request.query(), request.projectId(), request.limit());
+        return searchService.search(request.query(), request.projectId(), request.maxResults());
     }
 }

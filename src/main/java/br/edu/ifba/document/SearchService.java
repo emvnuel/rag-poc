@@ -30,11 +30,14 @@ public class SearchService {
     @ConfigProperty(name = "vector.search.probes", defaultValue = "20")
     int vectorSearchProbes;
 
-    @Transactional
-    public SearchResponse search(final String query, final UUID projectId, final Integer limit) {
-        final int searchLimit = limit != null ? limit : DEFAULT_LIMIT;
+    @ConfigProperty(name = "vector.search.distance.gap.threshold", defaultValue = "0.03")
+    double distanceGapThreshold;
 
-        LOG.infof("Searching for: '%s' in project: %s with limit: %d", query, projectId, searchLimit);
+    @Transactional
+    public SearchResponse search(final String query, final UUID projectId, final Integer maxResults) {
+        final int searchLimit = maxResults != null ? maxResults : DEFAULT_LIMIT;
+
+        LOG.infof("Searching for: '%s' in project: %s with max results: %d", query, projectId, searchLimit);
 
         final EmbeddingRequest request = new EmbeddingRequest(embeddingModel, query);
         final EmbeddingResponse response = embeddingClient.embed(request);
@@ -50,10 +53,12 @@ public class SearchService {
         );
 
         final List<SearchResult> searchResults = mapToSearchResults(results);
+        final List<SearchResult> filteredResults = filterByDistanceGap(searchResults);
 
-        LOG.infof("Found %d similar embeddings", searchResults.size());
+        LOG.infof("Found %d similar embeddings, filtered to %d relevant results", 
+                searchResults.size(), filteredResults.size());
 
-        return new SearchResponse(searchResults);
+        return new SearchResponse(filteredResults);
     }
 
     private String convertToVectorString(final List<Double> embedding) {
@@ -77,10 +82,39 @@ public class SearchService {
             final Integer chunkIndex = (Integer) row[2];
             final String fileName = (String) row[3];
             final Double distance = ((Number) row[4]).doubleValue();
-            
+
             searchResults.add(new SearchResult(id, chunkText, chunkIndex, fileName, distance));
         }
         
         return searchResults;
+    }
+
+    private List<SearchResult> filterByDistanceGap(final List<SearchResult> results) {
+        if (results.isEmpty()) {
+            return results;
+        }
+
+        if (results.size() == 1) {
+            return results;
+        }
+
+        final List<SearchResult> filtered = new ArrayList<>();
+        filtered.add(results.get(0));
+
+        for (int i = 1; i < results.size(); i++) {
+            final double currentDistance = results.get(i).distance();
+            final double previousDistance = results.get(i - 1).distance();
+            final double gap = currentDistance - previousDistance;
+
+            if (gap > distanceGapThreshold) {
+                LOG.infof("Filtering results after index %d due to distance gap: %.4f > %.4f", 
+                        i - 1, gap, distanceGapThreshold);
+                break;
+            }
+
+            filtered.add(results.get(i));
+        }
+
+        return filtered;
     }
 }
