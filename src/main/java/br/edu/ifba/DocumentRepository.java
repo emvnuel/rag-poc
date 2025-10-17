@@ -1,8 +1,10 @@
 package br.edu.ifba;
 
+import java.util.List;
 import java.util.UUID;
 
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
+import io.quarkus.panache.common.Page;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -18,5 +20,11 @@ public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>
             throw new IllegalArgumentException("Document not found with id: " + id);
         }
         return document;
+    }
+
+    public List<Document> findNotProcessed(final int limit) {
+        return find("status", DocumentStatus.NOT_PROCESSED)
+                .page(Page.ofSize(limit))
+                .list();
     }
 }

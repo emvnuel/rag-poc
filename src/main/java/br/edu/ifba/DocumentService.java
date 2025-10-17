@@ -1,5 +1,7 @@
 package br.edu.ifba;
 
+import java.util.List;
+
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -22,6 +24,18 @@ public class DocumentService {
 
     public Document findByFileName(final String fileName) {
         return documentRepository.findByFileName(fileName);
+    }
+
+    @Transactional
+    public List<Document> findAndMarkAsProcessing(final int limit) {
+        final List<Document> documents = documentRepository.findNotProcessed(limit);
+        documents.forEach(document -> document.setStatus(DocumentStatus.PROCESSING));
+        return documents;
+    }
+
+    @Transactional
+    public void markAsProcessed(final Document document) {
+        document.setStatus(DocumentStatus.PROCESSED);
     }
 
 }
