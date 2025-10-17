@@ -94,7 +94,7 @@ public class ChatService {
 
         for (int i = 0; i < sources.size(); i++) {
             final SearchResult source = sources.get(i);
-            context.append(String.format("[Document %d: %s]\n", i + 1, source.fileName()));
+            context.append(String.format("[Document %d: %s]\n", i + 1, source.source()));
             context.append(source.chunkText());
             context.append("\n\n");
         }

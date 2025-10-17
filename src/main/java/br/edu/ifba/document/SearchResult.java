@@ -6,6 +6,6 @@ public record SearchResult(
         UUID id,
         String chunkText,
         Integer chunkIndex,
-        String fileName,
+        String source,
         Double distance) {
 }
