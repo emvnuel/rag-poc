@@ -1,5 +1,6 @@
 package br.edu.ifba.exception;
 
+import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
@@ -16,7 +17,7 @@ public class ConstraintViolationExceptionMapper implements ExceptionMapper<Const
     @Override
     public Response toResponse(final ConstraintViolationException exception) {
         final String detail = exception.getConstraintViolations().stream()
-                .map(violation -> violation.getMessage())
+                .map(ConstraintViolation::getMessage)
                 .findFirst()
                 .orElse("Validation failed");
 
