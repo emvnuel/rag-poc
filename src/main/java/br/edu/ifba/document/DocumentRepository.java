@@ -35,4 +35,8 @@ public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>
                 .withLock(LockModeType.PESSIMISTIC_WRITE)
                 .list();
     }
+
+    public List<Document> findByProjectId(final UUID projectId) {
+        return find("project.id", projectId).list();
+    }
 }

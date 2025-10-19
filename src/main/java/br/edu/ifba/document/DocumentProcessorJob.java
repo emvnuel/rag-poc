@@ -1,5 +1,6 @@
 package br.edu.ifba.document;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import com.pgvector.PGvector;
@@ -38,7 +39,7 @@ public class DocumentProcessorJob {
     @ConfigProperty(name = "document.processor.chunks.per.batch")
     int chunksPerBatch;
 
-    @Scheduled(every = "{document.processor.schedule.marking}")
+    @Scheduled(every = "{document.processor.schedule.marking}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     @Transactional
     public void markDocumentsAsProcessing() {
         LOG.info("Starting document marking job...");
@@ -58,8 +59,9 @@ public class DocumentProcessorJob {
         LOG.info("Document marking job completed.");
     }
 
-    @Scheduled(every = "{document.processor.schedule.processing}")
+    @Scheduled(every = "{document.processor.schedule.processing}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void processDocumentChunks() {
+        final long startTime = System.currentTimeMillis();
         LOG.info("Starting chunk processing job...");
         
         final List<Document> processingDocuments = documentRepository.list("status", DocumentStatus.PROCESSING);
@@ -71,7 +73,8 @@ public class DocumentProcessorJob {
             processingDocuments.forEach(doc -> processChunks(doc.getId()));
         }
         
-        LOG.info("Chunk processing job completed.");
+        final long executionTime = System.currentTimeMillis() - startTime;
+        LOG.infof("Chunk processing job completed in %d ms", executionTime);
     }
 
     void processChunks(final java.util.UUID documentId) {
@@ -94,9 +97,7 @@ public class DocumentProcessorJob {
             int endIndex = Math.min(startIndex + chunksPerBatch, chunks.size());
             LOG.infof("Processing chunks %d to %d of document %s", startIndex, endIndex - 1, documentId);
             
-            for (int i = startIndex; i < endIndex; i++) {
-                processChunk(documentId, i, chunks.get(i), chunks.size());
-            }
+            processChunksBatch(documentId, chunks, startIndex, endIndex);
             
             if (endIndex >= chunks.size()) {
                 checkAndMarkAsProcessed(documentId, chunks.size());
@@ -104,7 +105,11 @@ public class DocumentProcessorJob {
             
         } catch (Exception e) {
             LOG.errorf(e, "Error processing document %s", documentId);
-            markAsFailed(documentId);
+            try {
+                markAsFailed(documentId);
+            } catch (Exception ex) {
+                LOG.errorf(ex, "Failed to mark document %s as failed (application may be shutting down)", documentId);
+            }
         }
     }
 
@@ -117,47 +122,66 @@ public class DocumentProcessorJob {
         return totalChunks;
     }
 
-    @Transactional
-    void processChunk(final java.util.UUID documentId, final int chunkIndex, 
-                      final String chunkText, final int totalChunks) {
+    void processChunksBatch(final java.util.UUID documentId, final List<String> chunks, 
+                            final int startIndex, final int endIndex) {
         try {
-            if (embeddingRepository.existsByDocumentAndChunkIndex(documentId, chunkIndex)) {
-                LOG.infof("Embedding already exists for chunk %d/%d, skipping", chunkIndex + 1, totalChunks);
+            final List<String> chunksToProcess = new ArrayList<>();
+            final List<Integer> chunkIndices = new ArrayList<>();
+            
+            for (int i = startIndex; i < endIndex; i++) {
+                if (!embeddingRepository.existsByDocumentAndChunkIndex(documentId, i)) {
+                    chunksToProcess.add(chunks.get(i));
+                    chunkIndices.add(i);
+                }
+            }
+            
+            if (chunksToProcess.isEmpty()) {
+                LOG.infof("All chunks %d to %d already processed, skipping batch", startIndex, endIndex - 1);
                 return;
             }
             
-            final Document document = documentRepository.findById(documentId);
-            if (document == null) {
-                LOG.errorf("Document %s not found", documentId);
-                return;
-            }
+            LOG.infof("Generating embeddings for %d chunks in batch (indices %d to %d)", 
+                    chunksToProcess.size(), startIndex, endIndex - 1);
             
-            LOG.infof("Generating embedding for chunk %d/%d", chunkIndex + 1, totalChunks);
-            
-            final EmbeddingRequest request = new EmbeddingRequest(embeddingModel, chunkText);
+            final EmbeddingRequest request = new EmbeddingRequest(embeddingModel, chunksToProcess);
             final EmbeddingResponse response = embeddingClient.embed(request);
             
-            final PGvector vector = convertToPGvector(response.data().getFirst().embedding());
-            final Embedding embedding = new Embedding(document, chunkIndex, chunkText, vector, response.model());
-            embeddingRepository.persist(embedding);
+            storeEmbeddingsBatch(documentId, chunks.size(), chunkIndices, chunksToProcess, response);
             
-            LOG.infof("Embedding stored for chunk %d/%d", chunkIndex + 1, totalChunks);
-            
-        } catch (org.hibernate.exception.ConstraintViolationException e) {
-            LOG.warnf("Duplicate chunk %d for document %s detected (concurrent processing), skipping", 
-                    chunkIndex, documentId);
-        } catch (jakarta.persistence.PersistenceException e) {
-            if (e.getCause() instanceof org.hibernate.exception.ConstraintViolationException) {
-                LOG.warnf("Duplicate chunk %d for document %s detected (concurrent processing), skipping", 
-                        chunkIndex, documentId);
-            } else {
-                LOG.errorf(e, "Error processing chunk %d of document %s", chunkIndex, documentId);
-                throw e;
-            }
         } catch (Exception e) {
-            LOG.errorf(e, "Error processing chunk %d of document %s", chunkIndex, documentId);
+            LOG.errorf(e, "Error processing batch for document %s", documentId);
             throw e;
         }
+    }
+
+    @Transactional
+    void storeEmbeddingsBatch(final java.util.UUID documentId, final int totalChunks,
+                              final List<Integer> chunkIndices, final List<String> chunksToProcess,
+                              final EmbeddingResponse response) {
+        final Document document = documentRepository.findById(documentId);
+        if (document == null) {
+            LOG.errorf("Document %s not found", documentId);
+            return;
+        }
+        
+        int successCount = 0;
+        for (int i = 0; i < response.data().size(); i++) {
+            final EmbeddingResponse.Embedding embeddingData = response.data().get(i);
+            final int chunkIndex = chunkIndices.get(i);
+            final String chunkText = chunksToProcess.get(i);
+            final PGvector vector = convertToPGvector(embeddingData.embedding());
+            
+            if (!embeddingRepository.existsByDocumentAndChunkIndex(documentId, chunkIndex)) {
+                final Embedding embedding = new Embedding(document, chunkIndex, chunkText, vector, response.model());
+                embeddingRepository.persist(embedding);
+                successCount++;
+                LOG.infof("Embedding stored for chunk %d/%d", chunkIndex + 1, totalChunks);
+            } else {
+                LOG.infof("Embedding already exists for chunk %d/%d (race condition), skipping", chunkIndex + 1, totalChunks);
+            }
+        }
+        
+        LOG.infof("Batch embedding completed: %d stored, %d skipped", successCount, chunksToProcess.size() - successCount);
     }
 
     @Transactional

@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import br.edu.ifba.document.DocumentInfoResponse;
+import br.edu.ifba.document.DocumentService;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.DELETE;
@@ -23,6 +25,9 @@ public class ProjectResources {
 
     @Inject
     ProjectService projectService;
+
+    @Inject
+    DocumentService documentService;
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
@@ -84,5 +89,23 @@ public class ProjectResources {
     public Response delete(@PathParam("id") final UUID id) {
         projectService.delete(id);
         return Response.noContent().build();
+    }
+
+    @GET
+    @Path("/{id}/documents")
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<DocumentInfoResponse> getDocuments(@PathParam("id") final UUID id) {
+        projectService.findById(id);
+        return documentService.findByProjectId(id).stream()
+                .map(document -> new DocumentInfoResponse(
+                        document.getId(),
+                        document.getType(),
+                        document.getStatus(),
+                        document.getFileName(),
+                        document.getMetadata(),
+                        document.getCreatedAt(),
+                        document.getUpdatedAt()
+                ))
+                .collect(Collectors.toList());
     }
 }

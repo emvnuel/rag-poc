@@ -145,6 +145,13 @@ public class DocumentResources {
         );
     }
 
+    @GET
+    @Path("/{id}/progress")
+    @Produces(MediaType.APPLICATION_JSON)
+    public DocumentProgressResponse getProgress(@PathParam("id") final UUID id) {
+        return documentService.getProcessingProgress(id);
+    }
+
     @POST
     @Path("/search")
     @Consumes(MediaType.APPLICATION_JSON)
