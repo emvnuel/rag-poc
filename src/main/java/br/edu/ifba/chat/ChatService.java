@@ -17,7 +17,6 @@ import org.jboss.logging.Logger;
 public class ChatService {
 
     private static final Logger LOG = Logger.getLogger(ChatService.class);
-    private static final int DEFAULT_MAX_RESULTS = 5;
 
     @Inject
     SearchService searchService;
@@ -44,6 +43,9 @@ public class ChatService {
     @ConfigProperty(name = "chat.system.prompt.no.context")
     String systemPromptNoContext;
 
+    @ConfigProperty(name = "chat.max.results")
+    Integer maxResults;
+
     public ChatResponse chat(final ChatRequest request) {
         final UUID projectId = request.projectId();
         final String userMessage = request.message();
@@ -51,7 +53,7 @@ public class ChatService {
 
         LOG.infof("Processing chat request for project: %s, message: '%s'", projectId, userMessage);
 
-        final SearchResponse searchResponse = searchService.search(userMessage, projectId, DEFAULT_MAX_RESULTS);
+        final SearchResponse searchResponse = searchService.search(userMessage, projectId, maxResults);
         final List<SearchResult> sources = searchResponse.results();
 
         final String contextPrompt = buildContextPrompt(sources);
@@ -94,7 +96,7 @@ public class ChatService {
 
         for (int i = 0; i < sources.size(); i++) {
             final SearchResult source = sources.get(i);
-            context.append(String.format("[Document %d: %s]\n", i + 1, source.source()));
+            context.append(String.format("[Document: %s]\n", source.id()));
             context.append(source.chunkText());
             context.append("\n\n");
         }
