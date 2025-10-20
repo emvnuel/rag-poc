@@ -159,4 +159,12 @@ public class DocumentResources {
     public SearchResponse search(@Valid final SearchRequest request) {
         return searchService.search(request.query(), request.projectId(), request.maxResults());
     }
+
+    @GET
+    @Path("/{id}/content")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String getContent(@PathParam("id") final UUID id) {
+        final Document document = documentService.findById(id);
+        return document.getContent();
+    }
 }
