@@ -18,28 +18,7 @@ public class EmbeddingRepository implements PanacheRepositoryBase<Embedding, UUI
     public boolean existsByDocumentAndChunkIndex(final UUID documentId, final Integer chunkIndex) {
         return count("document.id = ?1 AND chunkIndex = ?2", documentId, chunkIndex) > 0;
     }
-    
-    public List<Object[]> findSimilarEmbeddings(final String queryVector, final int limit, final int probes) {
-        entityManager.createNativeQuery("SET ivfflat.probes = " + probes)
-                .executeUpdate();
-        
-        final Query query = entityManager.createNativeQuery(
-                """
-                SELECT e.id, e.chunk_text, e.chunk_index, d.file_name,
-                       (e.vector <=> CAST(:queryVector AS vector)) as distance
-                FROM embeddings e
-                JOIN documents d ON e.document_id = d.id
-                ORDER BY distance
-                LIMIT :limit
-                """
-        );
-        
-        query.setParameter("queryVector", queryVector);
-        query.setParameter("limit", limit);
-        
-        return query.getResultList();
-    }
-    
+
     public List<Object[]> findSimilarEmbeddingsByProject(final String queryVector, final UUID projectId, final int limit, final int probes) {
         entityManager.createNativeQuery("SET ivfflat.probes = " + probes)
                 .executeUpdate();
