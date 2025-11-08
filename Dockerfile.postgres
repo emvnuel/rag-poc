@@ -1,0 +1,71 @@
+FROM postgres:15
+
+# Metadata
+LABEL maintainer="RAG SaaS Team"
+LABEL description="PostgreSQL 15 with pgvector and Apache AGE v1.5.0 for RAG applications"
+LABEL version="1.0"
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    postgresql-server-dev-15 \
+    libreadline-dev \
+    zlib1g-dev \
+    flex \
+    bison \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pgvector from PostgreSQL repository (more stable)
+RUN apt-get update && apt-get install -y postgresql-15-pgvector && rm -rf /var/lib/apt/lists/*
+
+# Install Apache AGE v1.5.0 (graph database)
+RUN cd /tmp && \
+    git clone --branch release/PG15/1.5.0 https://github.com/apache/age.git && \
+    cd age && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/age
+
+# Clean up build dependencies to reduce image size
+RUN apt-get purge -y --auto-remove \
+    build-essential \
+    git \
+    postgresql-server-dev-15 \
+    flex \
+    bison \
+    wget
+
+# Copy initialization scripts into the container
+# These scripts will run automatically in alphabetical order when the container starts
+# IMPORTANT: pgvector must be loaded BEFORE AGE to avoid segmentation faults
+COPY docker-init/01-init-pgvector.sql /docker-entrypoint-initdb.d/
+COPY docker-init/02-init-age.sql /docker-entrypoint-initdb.d/
+COPY docker-init/03-init-schema.sql /docker-entrypoint-initdb.d/
+
+# Note: We don't add AGE to shared_preload_libraries to avoid conflicts with pgvector
+# AGE will be loaded explicitly in the init script after pgvector is created
+
+# Set default search path to include ag_catalog for AGE
+RUN echo "search_path = 'ag_catalog, \"\$user\", public'" >> /usr/share/postgresql/postgresql.conf.sample
+
+# Health check to ensure PostgreSQL is ready
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+    CMD pg_isready -U postgres || exit 1
+
+EXPOSE 5432
+
+# Display information when container starts
+RUN echo '#!/bin/bash\n\
+echo "========================================"\n\
+echo "PostgreSQL 15 with Extensions"\n\
+echo "========================================"\n\
+echo "Extensions:"\n\
+echo "  - pgvector (Vector Similarity)"\n\
+echo "  - Apache AGE v1.5.0 (Graph Database)"\n\
+echo "========================================"\n\
+' > /docker-entrypoint-initdb.d/00-welcome.sh && \
+    chmod +x /docker-entrypoint-initdb.d/00-welcome.sh

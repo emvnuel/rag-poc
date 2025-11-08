@@ -1,0 +1,129 @@
+package br.edu.ifba.lightrag.storage;
+
+import org.jetbrains.annotations.NotNull;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Interface for vector storage operations.
+ * Used for storing and retrieving embedding vectors for entities, relations, and chunks.
+ * 
+ * Implementations: NanoVectorDBStorage, PGVectorStorage, MilvusVectorDBStorage,
+ *                  ChromaVectorDBStorage, FaissVectorDBStorage, MongoVectorDBStorage,
+ *                  QdrantVectorDBStorage
+ */
+public interface VectorStorage extends AutoCloseable {
+    
+    /**
+     * Initializes the vector storage backend.
+     * Must be called before any other operations.
+     */
+    CompletableFuture<Void> initialize();
+    
+    /**
+     * Upserts (inserts or updates) a vector with metadata.
+     *
+     * @param id the unique identifier for the vector
+     * @param vector the embedding vector (can be base64 encoded or raw array)
+     * @param metadata additional metadata associated with the vector
+     */
+    CompletableFuture<Void> upsert(@NotNull String id, @NotNull Object vector, @NotNull VectorMetadata metadata);
+    
+    /**
+     * Upserts multiple vectors with metadata.
+     *
+     * @param entries the list of vector entries to upsert
+     */
+    CompletableFuture<Void> upsertBatch(@NotNull List<VectorEntry> entries);
+    
+    /**
+     * Queries for similar vectors using cosine similarity or other metrics.
+     *
+     * @param queryVector the query vector
+     * @param topK the number of top results to return
+     * @param filter optional metadata filter
+     * @return a list of search results with IDs, scores, and metadata
+     */
+    CompletableFuture<List<VectorSearchResult>> query(
+            @NotNull Object queryVector, 
+            int topK, 
+            VectorFilter filter);
+    
+    /**
+     * Deletes a vector by ID.
+     *
+     * @param id the ID of the vector to delete
+     * @return true if the vector was deleted, false if it didn't exist
+     */
+    CompletableFuture<Boolean> delete(@NotNull String id);
+    
+    /**
+     * Deletes multiple vectors by IDs.
+     *
+     * @param ids the IDs of the vectors to delete
+     * @return the number of vectors that were deleted
+     */
+    CompletableFuture<Integer> deleteBatch(@NotNull List<String> ids);
+    
+    /**
+     * Gets a vector by ID.
+     *
+     * @param id the ID of the vector to retrieve
+     * @return the vector entry, or null if not found
+     */
+    CompletableFuture<VectorEntry> get(@NotNull String id);
+    
+    /**
+     * Clears all vectors from the storage.
+     */
+    CompletableFuture<Void> clear();
+    
+    /**
+     * Gets the number of vectors in the storage.
+     *
+     * @return the number of vectors
+     */
+    CompletableFuture<Long> size();
+    
+    /**
+     * Closes the storage and releases resources.
+     */
+    @Override
+    void close() throws Exception;
+    
+    /**
+     * Represents a vector entry with ID, vector data, and metadata.
+     */
+    record VectorEntry(
+            @NotNull String id,
+            @NotNull Object vector,
+            @NotNull VectorMetadata metadata) {
+    }
+    
+    /**
+     * Represents metadata associated with a vector.
+     */
+    record VectorMetadata(
+            @NotNull String type,
+            @NotNull String content,
+            String sourceId,
+            String documentId,
+            Integer chunkIndex) {
+    }
+    
+    /**
+     * Represents a filter for vector queries.
+     */
+    record VectorFilter(String type, List<String> ids) {
+    }
+    
+    /**
+     * Represents a search result from a vector query.
+     */
+    record VectorSearchResult(
+            @NotNull String id,
+            double score,
+            @NotNull VectorMetadata metadata) {
+    }
+}

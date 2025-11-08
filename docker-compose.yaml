@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg18-trixie
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: rag-saas-postgres:latest
     container_name: rag-saas-postgres
     environment:
       POSTGRES_USER: postgres
@@ -10,6 +13,17 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag-network
+
+networks:
+  rag-network:
+    driver: bridge
 
 volumes:
   postgres_data:
