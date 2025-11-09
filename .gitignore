@@ -48,3 +48,4 @@ nb-configuration.xml
 /lightrag-data/chunks.json
 /lightrag-data/llm_cache.json
 /lightrag-storage/
+.env.backup
