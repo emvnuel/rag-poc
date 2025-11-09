@@ -109,7 +109,8 @@ public interface VectorStorage extends AutoCloseable {
             @NotNull String content,
             String sourceId,
             String documentId,
-            Integer chunkIndex) {
+            Integer chunkIndex,
+            String projectId) {
     }
     
     /**

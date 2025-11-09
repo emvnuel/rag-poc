@@ -499,12 +499,14 @@ public class LightRAG {
                 .thenAccept(embedding -> {
                     // Collect vector entries for batch upsert
                     String documentId = metadata != null ? (String) metadata.get("document_id") : null;
+                    String projectId = metadata != null ? (String) metadata.get("project_id") : null;
                     VectorStorage.VectorMetadata vectorMetadata = new VectorStorage.VectorMetadata(
                         "chunk",
                         chunkContent,
                         docId,  // sourceId (the document ID from LightRAG perspective)
                         documentId,  // documentId (UUID from the document table)
-                        chunkIndex
+                        chunkIndex,
+                        projectId  // projectId (UUID from the project table)
                     );
                     synchronized (vectorEntries) {
                         vectorEntries.add(new VectorStorage.VectorEntry(chunkId, embedding, vectorMetadata));
@@ -572,7 +574,7 @@ public class LightRAG {
                     allEntities.size(), allRelations.size(), docId);
                 
                 // Store entities and relations in graph storage
-                return storeKnowledgeGraph(allEntities, allRelations)
+                return storeKnowledgeGraph(allEntities, allRelations, metadata)
                     .thenApply(ignored -> new KGExtractionResult(allEntities.size(), allRelations.size()));
             });
     }
@@ -797,7 +799,8 @@ public class LightRAG {
      */
     private CompletableFuture<Void> storeKnowledgeGraph(
         @NotNull List<Entity> entities,
-        @NotNull List<Relation> relations
+        @NotNull List<Relation> relations,
+        @Nullable Map<String, Object> metadata
     ) {
         if (entities.isEmpty() && relations.isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -835,17 +838,19 @@ public class LightRAG {
                     int i = 0;
                     for (Entity entity : uniqueEntities.values()) {
                         if (i < embeddings.size()) {
-                            VectorStorage.VectorMetadata metadata = new VectorStorage.VectorMetadata(
+                            String projectId = metadata != null ? (String) metadata.get("project_id") : null;
+                            VectorStorage.VectorMetadata vectorMetadata = new VectorStorage.VectorMetadata(
                                 "entity",
                                 entity.getEntityName(),
                                 entity.getSourceId(),  // sourceId from entity
                                 null,  // documentId (entities are not directly tied to documents)
-                                null   // chunkIndex (entities are not tied to specific chunks)
+                                null,  // chunkIndex (entities are not tied to specific chunks)
+                                projectId  // projectId (UUID from the project table)
                             );
                             vectorEntries.add(new VectorStorage.VectorEntry(
                                 UuidUtils.randomV7().toString(),  // Generate UUID for vector ID
                                 embeddings.get(i),
-                                metadata
+                                vectorMetadata
                             ));
                             i++;
                         }

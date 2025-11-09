@@ -58,9 +58,9 @@ public class GlobalQueryExecutor extends QueryExecutor {
                 return entityVectorStorage.query(queryEmbedding, topK, filter);
             })
             .thenCompose(entityResults -> {
-                // Step 3: Extract entity IDs from results
+                // Step 3: Extract entity names from results (content field contains entity name)
                 List<String> entityIds = entityResults.stream()
-                    .map(VectorStorage.VectorSearchResult::id)
+                    .map(result -> result.metadata().content())
                     .toList();
                 
                 if (entityIds.isEmpty()) {

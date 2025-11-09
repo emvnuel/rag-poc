@@ -116,10 +116,12 @@ public class ChatService {
 
         // Count citable sources (exclude "LightRAG Answer" at index 0)
         int citableSources = 0;
+        boolean hasLightRAGAnswer = false;
         for (int i = 0; i < sources.size(); i++) {
             final SearchResult source = sources.get(i);
-            // Skip "LightRAG Answer" and count only sources with document IDs
+            // Check if first source is LightRAG synthesized answer
             if (i == 0 && source.id() == null && "LightRAG Answer".equals(source.source())) {
+                hasLightRAGAnswer = true;
                 continue;
             }
             if (source.id() != null) {
@@ -127,10 +129,25 @@ public class ChatService {
             }
         }
 
-        // If no citable sources exist, use the no-context prompt
+        // If no citable sources exist:
+        // - If we have a LightRAG answer (e.g., from GLOBAL mode with entities), use it as context
+        // - Otherwise, use the no-context prompt
         if (citableSources == 0) {
-            LOG.infof("No citable sources available, using no-context prompt");
-            return systemPromptNoContext;
+            if (hasLightRAGAnswer) {
+                LOG.infof("No citable sources but LightRAG answer available, using it as context");
+                // Use the LightRAG answer as the context
+                final SearchResult lightRAGAnswer = sources.get(0);
+                final StringBuilder context = new StringBuilder();
+                context.append(systemPromptWithContext);
+                context.append("\n\n");
+                context.append("Contexto (baseado no grafo de conhecimento):\n");
+                context.append(lightRAGAnswer.chunkText());
+                context.append("\n\nResponda com base neste contexto.");
+                return context.toString();
+            } else {
+                LOG.infof("No citable sources available, using no-context prompt");
+                return systemPromptNoContext;
+            }
         }
 
         final StringBuilder context = new StringBuilder();

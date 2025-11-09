@@ -86,15 +86,19 @@ public class QuarkusEmbeddingAdapter implements EmbeddingFunction {
                 }
 
                 // Validate dimension matches configuration
-                if (doubleVector.size() != vectorDimension) {
-                    LOG.warnf("Expected vector dimension %d but got %d - updating configuration assumption",
+                final int actualDimension = doubleVector.size();
+                if (actualDimension != vectorDimension) {
+                    LOG.warnf("Vector dimension mismatch: expected %d but got %d - will truncate to configured dimension",
                             Integer.valueOf(vectorDimension),
-                            Integer.valueOf(doubleVector.size()));
+                            Integer.valueOf(actualDimension));
                 }
 
-                // Convert Double list to float array
-                final float[] floatVector = new float[doubleVector.size()];
-                for (int i = 0; i < doubleVector.size(); i++) {
+                // Convert Double list to float array, truncating if necessary
+                // This handles cases where the model produces more dimensions than we need
+                // (e.g., qwen3-embedding:8b produces 4096 but we need 4000 for HNSW index limit)
+                final int targetDimension = Math.min(actualDimension, vectorDimension);
+                final float[] floatVector = new float[targetDimension];
+                for (int i = 0; i < targetDimension; i++) {
                     floatVector[i] = doubleVector.get(i).floatValue();
                 }
                 

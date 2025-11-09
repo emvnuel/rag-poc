@@ -31,14 +31,15 @@ CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type);
 
--- Embeddings table with vector support
+-- Embeddings table with vector support (legacy - not actively used)
+-- Note: LightRAG uses ag_catalog.lightrag_vectors table instead
 CREATE TABLE IF NOT EXISTS embeddings (
     id UUID PRIMARY KEY,
     created_at TIMESTAMP NOT NULL,
     document_id UUID NOT NULL,
     chunk_index INTEGER NOT NULL,
     chunk_text TEXT NOT NULL,
-    vector vector(1536) NOT NULL,
+    vector halfvec(4000) NOT NULL,
     model VARCHAR(255) NOT NULL,
     CONSTRAINT fk_embeddings_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
     CONSTRAINT uk_embeddings_document_chunk UNIQUE (document_id, chunk_index)
@@ -49,10 +50,11 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_document_id ON embeddings(document_id)
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
 
 -- Vector index for similarity search (HNSW algorithm)
--- Note: Using 1536 dimensions (OpenAI standard) to stay within pgvector limits
+-- Note: Using halfvec(4000) - maximum supported dimensions with HNSW index
+-- halfvec provides efficient storage (2 bytes per dimension)
 -- HNSW provides fast approximate nearest neighbor search
 CREATE INDEX IF NOT EXISTS idx_embeddings_vector 
-ON embeddings USING hnsw (vector vector_cosine_ops) 
+ON embeddings USING hnsw (vector halfvec_cosine_ops) 
 WITH (m = 16, ef_construction = 64);
 
 -- Grant necessary permissions

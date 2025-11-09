@@ -65,16 +65,19 @@ public class PgVectorStorage implements VectorStorage {
                 // Create pgvector extension if not exists
                 stmt.execute("CREATE EXTENSION IF NOT EXISTS vector");
                 
-                // Create table with vector column
+                // Create table with halfvec column (more efficient for high-dimensional vectors)
+                // halfvec uses 2 bytes per dimension vs 4 bytes for vector
+                // Supported up to 4,000 dimensions with HNSW index
                 String createTableSql = String.format("""
                     CREATE TABLE IF NOT EXISTS %s (
                         id UUID PRIMARY KEY,
-                        vector vector(%d) NOT NULL,
+                        vector halfvec(%d) NOT NULL,
                         type TEXT NOT NULL,
                         content TEXT NOT NULL,
                         source_id TEXT,
                         document_id UUID,
                         chunk_index INTEGER,
+                        project_id UUID,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                     """, tableName, dimension);
@@ -104,9 +107,9 @@ public class PgVectorStorage implements VectorStorage {
                 }
                 
                 // Create index for vector similarity search (using HNSW for better performance)
-                // Using cosine distance as default
+                // Using halfvec_cosine_ops for halfvec type (cosine distance)
                 String createIndexSql = String.format(
-                    "CREATE INDEX IF NOT EXISTS %s_vector_idx ON %s USING hnsw (vector vector_cosine_ops)",
+                    "CREATE INDEX IF NOT EXISTS %s_vector_idx ON %s USING hnsw (vector halfvec_cosine_ops)",
                     tableName, tableName
                 );
                 stmt.execute(createIndexSql);
@@ -136,15 +139,16 @@ public class PgVectorStorage implements VectorStorage {
         return CompletableFuture.runAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 String sql = String.format("""
-                    INSERT INTO %s (id, vector, type, content, source_id, document_id, chunk_index)
-                    VALUES (?, ?::vector, ?, ?, ?, ?::uuid, ?)
+                    INSERT INTO %s (id, vector, type, content, source_id, document_id, chunk_index, project_id)
+                    VALUES (?, ?::halfvec, ?, ?, ?, ?::uuid, ?, ?::uuid)
                     ON CONFLICT (id) DO UPDATE SET
                         vector = EXCLUDED.vector,
                         type = EXCLUDED.type,
                         content = EXCLUDED.content,
                         source_id = EXCLUDED.source_id,
                         document_id = EXCLUDED.document_id,
-                        chunk_index = EXCLUDED.chunk_index
+                        chunk_index = EXCLUDED.chunk_index,
+                        project_id = EXCLUDED.project_id
                     """, tableName);
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -159,6 +163,11 @@ public class PgVectorStorage implements VectorStorage {
                         pstmt.setNull(6, java.sql.Types.OTHER);
                     }
                     pstmt.setInt(7, metadata.chunkIndex() != null ? metadata.chunkIndex() : 0);
+                    if (metadata.projectId() != null) {
+                        pstmt.setObject(8, UUID.fromString(metadata.projectId()));
+                    } else {
+                        pstmt.setNull(8, java.sql.Types.OTHER);
+                    }
                     
                     try {
                         pstmt.executeUpdate();
@@ -193,15 +202,16 @@ public class PgVectorStorage implements VectorStorage {
                 conn.setAutoCommit(false);
                 
                 String sql = String.format("""
-                    INSERT INTO %s (id, vector, type, content, source_id, document_id, chunk_index)
-                    VALUES (?, ?::vector, ?, ?, ?, ?::uuid, ?)
+                    INSERT INTO %s (id, vector, type, content, source_id, document_id, chunk_index, project_id)
+                    VALUES (?, ?::halfvec, ?, ?, ?, ?::uuid, ?, ?::uuid)
                     ON CONFLICT (id) DO UPDATE SET
                         vector = EXCLUDED.vector,
                         type = EXCLUDED.type,
                         content = EXCLUDED.content,
                         source_id = EXCLUDED.source_id,
                         document_id = EXCLUDED.document_id,
-                        chunk_index = EXCLUDED.chunk_index
+                        chunk_index = EXCLUDED.chunk_index,
+                        project_id = EXCLUDED.project_id
                     """, tableName);
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -218,6 +228,11 @@ public class PgVectorStorage implements VectorStorage {
                             pstmt.setNull(6, java.sql.Types.OTHER);
                         }
                         pstmt.setInt(7, entry.metadata().chunkIndex() != null ? entry.metadata().chunkIndex() : 0);
+                        if (entry.metadata().projectId() != null) {
+                            pstmt.setObject(8, UUID.fromString(entry.metadata().projectId()));
+                        } else {
+                            pstmt.setNull(8, java.sql.Types.OTHER);
+                        }
                         pstmt.addBatch();
                     }
                     
@@ -256,13 +271,12 @@ public class PgVectorStorage implements VectorStorage {
             List<VectorSearchResult> results = new ArrayList<>();
             
             try (Connection conn = dataSource.getConnection()) {
-                // Build query with JOIN to documents table for project filtering
+                // Build query with direct project_id filtering (no JOIN needed)
                 StringBuilder sqlBuilder = new StringBuilder();
                 sqlBuilder.append(String.format("""
-                    SELECT v.id, v.type, v.content, v.source_id, v.document_id, v.chunk_index,
-                           1 - (v.vector <=> ?::vector) AS similarity
+                    SELECT v.id, v.type, v.content, v.source_id, v.document_id, v.chunk_index, v.project_id,
+                           1 - (v.vector <=> ?::halfvec) AS similarity
                     FROM %s v
-                    LEFT JOIN documents d ON v.document_id = d.id
                     WHERE 1=1
                     """, tableName));
                 
@@ -271,12 +285,12 @@ public class PgVectorStorage implements VectorStorage {
                     sqlBuilder.append(" AND v.type = ?");
                 }
                 
-                // Filter by projectId (REQUIRED)
+                // Filter by projectId directly on vector table
                 if (filter != null && filter.projectId() != null) {
-                    sqlBuilder.append(" AND d.project_id = ?::uuid");
+                    sqlBuilder.append(" AND v.project_id = ?::uuid");
                 }
                 
-                sqlBuilder.append(" ORDER BY v.vector <=> ?::vector");
+                sqlBuilder.append(" ORDER BY v.vector <=> ?::halfvec");
                 sqlBuilder.append(" LIMIT ?");
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sqlBuilder.toString())) {
@@ -304,7 +318,8 @@ public class PgVectorStorage implements VectorStorage {
                             rs.getString("content"),
                             rs.getString("source_id"),
                             rs.getString("document_id"),
-                            rs.getInt("chunk_index")
+                            rs.getInt("chunk_index"),
+                            rs.getString("project_id")
                         );
                         
                         results.add(new VectorSearchResult(
@@ -399,7 +414,8 @@ public class PgVectorStorage implements VectorStorage {
                             rs.getString("content"),
                             rs.getString("source_id"),
                             rs.getString("document_id"),
-                            rs.getInt("chunk_index")
+                            rs.getInt("chunk_index"),
+                            rs.getString("project_id")
                         );
                         
                         String vectorStr = rs.getString("vector");
