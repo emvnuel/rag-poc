@@ -7,6 +7,7 @@ import br.edu.ifba.chat.LlmChatResponse;
 import br.edu.ifba.lightrag.llm.LLMFunction;
 import io.quarkus.arc.Arc;
 import io.quarkus.arc.ManagedContext;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -21,7 +22,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
+
+import jakarta.annotation.PostConstruct;
 
 /**
  * Adapter that bridges the existing Quarkus LlmChatClient to LightRAG's LLMFunction interface.
@@ -43,6 +47,9 @@ public class QuarkusLLMAdapter implements LLMFunction {
     };
     
     private static final Executor EXECUTOR = Executors.newThreadPerTaskExecutor(THREAD_FACTORY);
+    
+    // Semaphore to limit concurrent LLM API calls
+    private Semaphore llmConcurrencyLimiter;
 
     @Inject
     @RestClient
@@ -60,6 +67,15 @@ public class QuarkusLLMAdapter implements LLMFunction {
     @ConfigProperty(name = "chat.top.p", defaultValue = "0.9")
     Double defaultTopP;
 
+    @ConfigProperty(name = "lightrag.llm.max.concurrent.calls", defaultValue = "10")
+    Integer maxConcurrentLlmCalls;
+    
+    @PostConstruct
+    void init() {
+        this.llmConcurrencyLimiter = new Semaphore(maxConcurrentLlmCalls, true);
+        LOG.infof("Initialized LLM adapter with max %d concurrent calls", maxConcurrentLlmCalls);
+    }
+
     @Override
     public CompletableFuture<String> apply(
             @NotNull final String prompt,
@@ -69,13 +85,22 @@ public class QuarkusLLMAdapter implements LLMFunction {
 
         // Execute in a virtual thread with proper Quarkus Arc context
         return CompletableFuture.supplyAsync(() -> {
-            final ManagedContext requestContext = Arc.container().requestContext();
-            
-            if (!requestContext.isActive()) {
-                requestContext.activate();
+            // Acquire semaphore permit before making LLM call
+            try {
+                llmConcurrencyLimiter.acquire();
+                LOG.debugf("Acquired LLM semaphore permit (available: %d/%d)", 
+                          llmConcurrencyLimiter.availablePermits(), maxConcurrentLlmCalls);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for LLM permit", e);
             }
             
+            final ManagedContext requestContext = Arc.container().requestContext();
+            
             try {
+                if (!requestContext.isActive()) {
+                    requestContext.activate();
+                }
                 final int historySize = historyMessages != null ? historyMessages.size() : 0;
                 LOG.debugf("LightRAG LLM request - prompt length: %d, system prompt: %s, history size: %d, thread: %s",
                         Integer.valueOf(prompt.length()),
@@ -121,6 +146,10 @@ public class QuarkusLLMAdapter implements LLMFunction {
                 LOG.errorf(e, "Error calling LLM via QuarkusLLMAdapter");
                 throw new RuntimeException("Failed to get LLM completion: " + e.getMessage(), e);
             } finally {
+                // Release semaphore permit after LLM call completes
+                llmConcurrencyLimiter.release();
+                LOG.debugf("Released LLM semaphore permit (available: %d/%d)", 
+                          llmConcurrencyLimiter.availablePermits(), maxConcurrentLlmCalls);
                 requestContext.deactivate();
             }
         }, EXECUTOR);

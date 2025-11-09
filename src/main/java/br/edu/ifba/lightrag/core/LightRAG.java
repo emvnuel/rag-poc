@@ -482,43 +482,76 @@ public class LightRAG {
             config.chunkOverlap()
         );
         
-        logger.debug("Document {} chunked into {} pieces", docId, chunks.size());
+        logger.info("Document {} chunked into {} pieces", docId, chunks.size());
         
-        // Step 2: Store chunks and generate embeddings
-        List<CompletableFuture<Void>> chunkFutures = new ArrayList<>();
-        List<VectorStorage.VectorEntry> vectorEntries = new ArrayList<>();
+        // Step 2: Store chunks in KV storage
+        List<String> chunkIds = new ArrayList<>();
+        List<CompletableFuture<Void>> storageFutures = new ArrayList<>();
         
         for (int i = 0; i < chunks.size(); i++) {
             String chunkId = UuidUtils.randomV7().toString();
-            String chunkContent = chunks.get(i);
-            final int chunkIndex = i;  // Capture index for lambda
-            
-            // Store chunk content
-            CompletableFuture<Void> chunkFuture = chunkStorage.set(chunkId, chunkContent)
-                .thenCompose(v -> embeddingFunction.embedSingle(chunkContent))
-                .thenAccept(embedding -> {
-                    // Collect vector entries for batch upsert
-                    String documentId = metadata != null ? (String) metadata.get("document_id") : null;
-                    String projectId = metadata != null ? (String) metadata.get("project_id") : null;
-                    VectorStorage.VectorMetadata vectorMetadata = new VectorStorage.VectorMetadata(
-                        "chunk",
-                        chunkContent,
-                        docId,  // sourceId (the document ID from LightRAG perspective)
-                        documentId,  // documentId (UUID from the document table)
-                        chunkIndex,
-                        projectId  // projectId (UUID from the project table)
-                    );
-                    synchronized (vectorEntries) {
-                        vectorEntries.add(new VectorStorage.VectorEntry(chunkId, embedding, vectorMetadata));
-                    }
-                });
-            
-            chunkFutures.add(chunkFuture);
+            chunkIds.add(chunkId);
+            storageFutures.add(chunkStorage.set(chunkId, chunks.get(i)));
         }
         
-        // Step 3: Wait for all chunks to be processed, then batch upsert vectors
-        return CompletableFuture.allOf(chunkFutures.toArray(new CompletableFuture[0]))
-            .thenCompose(v -> chunkVectorStorage.upsertBatch(vectorEntries))
+        // Step 3: Wait for storage, then generate embeddings in batches
+        return CompletableFuture.allOf(storageFutures.toArray(new CompletableFuture[0]))
+            .thenCompose(v -> {
+                logger.debug("Chunks stored, generating embeddings for {} chunks in batches", chunks.size());
+                
+                // Batch embedding requests to reduce API calls
+                int embeddingBatchSize = config.embeddingBatchSize();
+                List<CompletableFuture<Void>> embeddingBatchFutures = new ArrayList<>();
+                List<VectorStorage.VectorEntry> vectorEntries = new ArrayList<>();
+                
+                for (int batchStart = 0; batchStart < chunks.size(); batchStart += embeddingBatchSize) {
+                    int batchEnd = Math.min(batchStart + embeddingBatchSize, chunks.size());
+                    final int batchIndex = batchStart / embeddingBatchSize + 1;
+                    final int totalBatches = (chunks.size() + embeddingBatchSize - 1) / embeddingBatchSize;
+                    final int finalBatchStart = batchStart;
+                    
+                    List<String> batchChunks = chunks.subList(batchStart, batchEnd);
+                    logger.debug("Processing embedding batch {}/{} ({} chunks)", 
+                                 batchIndex, totalBatches, batchChunks.size());
+                    
+                    // Generate embeddings for this batch
+                    CompletableFuture<Void> batchFuture = embeddingFunction.embed(batchChunks)
+                        .thenAccept(embeddings -> {
+                            // Create vector entries for this batch
+                            String documentId = metadata != null ? (String) metadata.get("document_id") : null;
+                            String projectId = metadata != null ? (String) metadata.get("project_id") : null;
+                            
+                            for (int i = 0; i < embeddings.size(); i++) {
+                                int chunkIndex = finalBatchStart + i;
+                                VectorStorage.VectorMetadata vectorMetadata = new VectorStorage.VectorMetadata(
+                                    "chunk",
+                                    batchChunks.get(i),
+                                    docId,  // sourceId (the document ID from LightRAG perspective)
+                                    documentId,  // documentId (UUID from the document table)
+                                    chunkIndex,
+                                    projectId  // projectId (UUID from the project table)
+                                );
+                                synchronized (vectorEntries) {
+                                    vectorEntries.add(new VectorStorage.VectorEntry(
+                                        chunkIds.get(chunkIndex), 
+                                        embeddings.get(i), 
+                                        vectorMetadata
+                                    ));
+                                }
+                            }
+                            logger.debug("Embedding batch {}/{} completed", batchIndex, totalBatches);
+                        });
+                    
+                    embeddingBatchFutures.add(batchFuture);
+                }
+                
+                // Wait for all embedding batches, then upsert vectors
+                return CompletableFuture.allOf(embeddingBatchFutures.toArray(new CompletableFuture[0]))
+                    .thenCompose(ignored -> {
+                        logger.info("All embeddings generated, upserting {} vectors to storage", vectorEntries.size());
+                        return chunkVectorStorage.upsertBatch(vectorEntries);
+                    });
+            })
             .thenCompose(v -> extractKnowledgeGraph(docId, chunks, metadata))
             .thenApply(kgResult -> new ProcessingResult(chunks.size(), kgResult.entityCount, kgResult.relationCount));
     }
@@ -532,7 +565,7 @@ public class LightRAG {
      * Extracts entities and relations from chunks using LLM.
      * This implementation:
      * 1. Builds extraction prompts for each chunk
-     * 2. Calls LLM to extract entities and relations
+     * 2. Calls LLM to extract entities and relations in batches
      * 3. Parses JSON responses into Entity/Relation objects
      * 4. Upserts entities and relations to graph storage
      * 5. Generates and stores entity embeddings in vector storage
@@ -542,41 +575,79 @@ public class LightRAG {
         @NotNull List<String> chunks,
         @Nullable Map<String, Object> metadata
     ) {
-        logger.debug("Extracting knowledge graph from {} chunks", chunks.size());
+        logger.info("Extracting knowledge graph from {} chunks", chunks.size());
         
         if (chunks.isEmpty()) {
             return CompletableFuture.completedFuture(new KGExtractionResult(0, 0));
         }
         
-        // Process chunks in parallel and extract entities/relations
-        List<CompletableFuture<KGExtractionChunkResult>> extractionFutures = new ArrayList<>();
+        // Process chunks in batches to control parallelism
+        int kgBatchSize = config.kgExtractionBatchSize();
+        List<Entity> allEntities = new ArrayList<>();
+        List<Relation> allRelations = new ArrayList<>();
         
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunkId = UuidUtils.randomV7().toString();
-            String chunkContent = chunks.get(i);
-            extractionFutures.add(extractKnowledgeGraphFromChunk(chunkId, chunkContent));
-        }
+        // Split chunks into batches
+        int totalBatches = (chunks.size() + kgBatchSize - 1) / kgBatchSize;
+        logger.info("Processing {} chunks in {} batches (batch size: {})", 
+                     chunks.size(), totalBatches, kgBatchSize);
         
-        // Wait for all extractions to complete
-        return CompletableFuture.allOf(extractionFutures.toArray(new CompletableFuture[0]))
-            .thenCompose(v -> {
-                // Collect all entities and relations
-                List<Entity> allEntities = new ArrayList<>();
-                List<Relation> allRelations = new ArrayList<>();
+        // Process batches sequentially using CompletableFuture chain
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        
+        for (int batchStart = 0; batchStart < chunks.size(); batchStart += kgBatchSize) {
+            int batchEnd = Math.min(batchStart + kgBatchSize, chunks.size());
+            final int batchIndex = batchStart / kgBatchSize + 1;
+            final int finalBatchStart = batchStart;
+            
+            List<String> batchChunks = chunks.subList(batchStart, batchEnd);
+            
+            chain = chain.thenCompose(v -> {
+                logger.info("Processing KG extraction batch {}/{} ({} chunks)", 
+                           batchIndex, totalBatches, batchChunks.size());
                 
-                for (CompletableFuture<KGExtractionChunkResult> future : extractionFutures) {
-                    KGExtractionChunkResult result = future.join();
-                    allEntities.addAll(result.entities);
-                    allRelations.addAll(result.relations);
+                // Process all chunks in this batch in parallel
+                List<CompletableFuture<KGExtractionChunkResult>> batchFutures = new ArrayList<>();
+                
+                for (int i = 0; i < batchChunks.size(); i++) {
+                    String chunkId = UuidUtils.randomV7().toString();
+                    String chunkContent = batchChunks.get(i);
+                    batchFutures.add(extractKnowledgeGraphFromChunk(chunkId, chunkContent));
                 }
                 
-                logger.debug("Extracted {} entities and {} relations from document {}", 
-                    allEntities.size(), allRelations.size(), docId);
-                
-                // Store entities and relations in graph storage
-                return storeKnowledgeGraph(allEntities, allRelations, metadata)
-                    .thenApply(ignored -> new KGExtractionResult(allEntities.size(), allRelations.size()));
+                // Wait for this batch to complete before moving to next batch
+                return CompletableFuture.allOf(batchFutures.toArray(new CompletableFuture[0]))
+                    .thenApply(ignored -> {
+                        // Collect results from this batch
+                        int batchEntities = 0;
+                        int batchRelations = 0;
+                        
+                        for (CompletableFuture<KGExtractionChunkResult> future : batchFutures) {
+                            KGExtractionChunkResult result = future.join();
+                            synchronized (allEntities) {
+                                allEntities.addAll(result.entities);
+                                allRelations.addAll(result.relations);
+                                batchEntities += result.entities.size();
+                                batchRelations += result.relations.size();
+                            }
+                        }
+                        
+                        logger.info("KG batch {}/{} completed - entities: {}, relations: {} (total: {} entities, {} relations)", 
+                                   batchIndex, totalBatches, batchEntities, batchRelations,
+                                   allEntities.size(), allRelations.size());
+                        
+                        return null;
+                    });
             });
+        }
+        
+        // After all batches complete, store the knowledge graph
+        return chain.thenCompose(v -> {
+            logger.info("All KG extraction batches completed - total entities: {}, relations: {}", 
+                       allEntities.size(), allRelations.size());
+            
+            return storeKnowledgeGraph(allEntities, allRelations, metadata)
+                .thenApply(ignored -> new KGExtractionResult(allEntities.size(), allRelations.size()));
+        });
     }
     
     /**
@@ -910,7 +981,9 @@ public class LightRAG {
         int chunkOverlap,
         int maxTokens,
         int topK,
-        boolean enableCache
+        boolean enableCache,
+        int kgExtractionBatchSize,
+        int embeddingBatchSize
     ) {
         public static LightRAGConfig defaults() {
             return new LightRAGConfig(
@@ -918,7 +991,9 @@ public class LightRAG {
                 100,   // chunkOverlap
                 4000,  // maxTokens
                 10,    // topK
-                true   // enableCache
+                true,  // enableCache
+                20,    // kgExtractionBatchSize
+                32     // embeddingBatchSize
             );
         }
     }

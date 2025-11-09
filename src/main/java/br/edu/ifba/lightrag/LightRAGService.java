@@ -89,6 +89,12 @@ public class LightRAGService {
     @ConfigProperty(name = "lightrag.entity.extraction.system.prompt")
     String entityExtractionSystemPrompt;
 
+    @ConfigProperty(name = "lightrag.kg.extraction.batch.size", defaultValue = "20")
+    int kgExtractionBatchSize;
+
+    @ConfigProperty(name = "lightrag.embedding.batch.size", defaultValue = "32")
+    int embeddingBatchSize;
+
     private LightRAG lightRAG;
     private JsonKVStorage chunkKVStorage;
     private JsonKVStorage llmCacheStorage;
@@ -122,7 +128,9 @@ public class LightRAGService {
                     chunkOverlap,
                     4000,  // maxTokens
                     topK,
-                    true   // enableCache
+                    true,  // enableCache
+                    kgExtractionBatchSize,
+                    embeddingBatchSize
             );
 
             // Build LightRAG instance

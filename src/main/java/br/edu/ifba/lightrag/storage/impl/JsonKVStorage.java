@@ -61,12 +61,22 @@ public class JsonKVStorage implements KVStorage {
                 // Load existing data if file exists
                 if (Files.exists(filePath)) {
                     logger.info("Loading existing data from: {}", filePath);
-                    Map<String, String> data = mapper.readValue(
-                        filePath.toFile(),
-                        new TypeReference<Map<String, String>>() {}
-                    );
-                    storage.putAll(data);
-                    logger.info("Loaded {} entries from storage", storage.size());
+                    try {
+                        Map<String, String> data = mapper.readValue(
+                            filePath.toFile(),
+                            new TypeReference<Map<String, String>>() {}
+                        );
+                        storage.putAll(data);
+                        logger.info("Loaded {} entries from storage", storage.size());
+                    } catch (com.fasterxml.jackson.core.JsonParseException e) {
+                        // Handle corrupted JSON file
+                        logger.warn("Corrupted JSON file detected at {}, backing up and creating new file", filePath, e);
+                        Path backupPath = Paths.get(filePath.toString() + ".corrupted." + System.currentTimeMillis());
+                        Files.move(filePath, backupPath);
+                        logger.info("Backed up corrupted file to: {}", backupPath);
+                        // Create new empty storage
+                        save();
+                    }
                 } else {
                     logger.info("Creating new storage file: {}", filePath);
                     save();
