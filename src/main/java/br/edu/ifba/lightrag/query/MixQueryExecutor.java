@@ -1,6 +1,7 @@
 package br.edu.ifba.lightrag.query;
 
 import br.edu.ifba.lightrag.core.Entity;
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.core.Relation;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
@@ -36,7 +37,7 @@ public class MixQueryExecutor extends QueryExecutor {
     }
     
     @Override
-    public CompletableFuture<String> execute(
+    public CompletableFuture<LightRAGQueryResult> execute(
         @NotNull String query,
         @NotNull QueryParam param
     ) {
@@ -45,87 +46,148 @@ public class MixQueryExecutor extends QueryExecutor {
         // Step 1: Embed the query
         return embeddingFunction.embedSingle(query)
             .thenCompose(queryEmbedding -> {
-                // Step 2: Search for similar entities (initial seeds)
+                // Step 2: Search for similar entities (initial seeds) with project filter
                 int topK = param.getTopK();
-                return entityVectorStorage.query(queryEmbedding, topK, null)
-                    .thenCompose(results -> {
-                        List<String> seedEntityIds = results.stream()
+                VectorStorage.VectorFilter entityFilter = new VectorStorage.VectorFilter(
+                    "entity", 
+                    null, 
+                    param.getProjectId()
+                );
+                CompletableFuture<List<VectorStorage.VectorSearchResult>> entitySearchFuture = 
+                    entityVectorStorage.query(queryEmbedding, topK, entityFilter);
+                
+                // Step 3: Search for relevant chunks in parallel with project filter
+                VectorStorage.VectorFilter chunkFilter = new VectorStorage.VectorFilter(
+                    "chunk", 
+                    null, 
+                    param.getProjectId()
+                );
+                CompletableFuture<List<VectorStorage.VectorSearchResult>> chunkSearchFuture = 
+                    chunkVectorStorage.query(queryEmbedding, param.getChunkTopK(), chunkFilter);
+                
+                return CompletableFuture.allOf(entitySearchFuture, chunkSearchFuture)
+                    .thenCompose(v -> {
+                        List<VectorStorage.VectorSearchResult> entityResults = entitySearchFuture.join();
+                        List<VectorStorage.VectorSearchResult> chunkResults = chunkSearchFuture.join();
+                        
+                        List<String> seedEntityIds = entityResults.stream()
                             .map(VectorStorage.VectorSearchResult::id)
                             .toList();
                         
                         if (seedEntityIds.isEmpty()) {
-                            return CompletableFuture.completedFuture("");
+                            // Only chunks available
+                            List<LightRAGQueryResult.SourceChunk> chunkSources = convertToSourceChunks(chunkResults);
+                            String context = formatChunkContextWithCitations(chunkResults);
+                            return CompletableFuture.completedFuture(
+                                new ResultWithSources(context, chunkSources, Collections.emptyList())
+                            );
                         }
                         
-                        // Step 3: Expand graph to find related entities (1-hop neighborhood)
+                        // Step 4: Expand graph to find related entities (1-hop neighborhood)
                         return expandGraph(seedEntityIds, 1)
                             .thenCompose(expandedEntityIds -> {
-                                // Step 4: Get all entities and relations
+                                // Step 5: Get all entities and relations
                                 return graphStorage.getEntities(expandedEntityIds)
                                     .thenCompose(entities -> 
                                         getAllRelations(expandedEntityIds)
-                                            .thenApply(relations -> formatGraphContext(entities, relations))
+                                            .thenApply(relations -> {
+                                                // Convert entity results to source chunks
+                                                List<LightRAGQueryResult.SourceChunk> entitySources = new ArrayList<>();
+                                                for (VectorStorage.VectorSearchResult result : entityResults) {
+                                                    entitySources.add(new LightRAGQueryResult.SourceChunk(
+                                                        result.id(),
+                                                        result.metadata().content() != null ? result.metadata().content() : "",
+                                                        result.score(),
+                                                        result.metadata().documentId() != null ? result.metadata().documentId() : result.id(),
+                                                        result.id(),
+                                                        0,
+                                                        "entity"
+                                                    ));
+                                                }
+                                                
+                                                // Convert chunk results to source chunks
+                                                List<LightRAGQueryResult.SourceChunk> chunkSources = convertToSourceChunks(chunkResults);
+                                                
+                                                return new ResultWithSources(
+                                                    formatGraphContextWithEntities(entities, relations),
+                                                    chunkSources,
+                                                    entitySources
+                                                );
+                                            })
                                     );
-                            });
-                    })
-                    .thenCompose(graphContext -> {
-                        // Step 5: Also get relevant chunks for detailed context
-                        return chunkVectorStorage.query(queryEmbedding, param.getChunkTopK(), null)
-                            .thenCompose(chunkResults -> {
-                                List<CompletableFuture<String>> chunkFutures = new ArrayList<>();
-                                for (VectorStorage.VectorSearchResult result : chunkResults) {
-                                    String content = result.metadata().content();
-                                    if (content != null && !content.isEmpty()) {
-                                        chunkFutures.add(CompletableFuture.completedFuture(content));
-                                    } else {
-                                        chunkFutures.add(chunkStorage.get(result.id()));
-                                    }
-                                }
-                                
-                                if (chunkFutures.isEmpty()) {
-                                    return CompletableFuture.completedFuture(graphContext);
-                                }
-                                
-                                return CompletableFuture.allOf(chunkFutures.toArray(new CompletableFuture[0]))
-                                    .thenApply(v -> {
-                                        List<String> chunks = chunkFutures.stream()
-                                            .map(CompletableFuture::join)
-                                            .filter(c -> c != null && !c.isEmpty())
-                                            .toList();
-                                        
-                                        // Combine graph and chunk contexts
-                                        StringBuilder combinedContext = new StringBuilder();
-                                        
-                                        if (!graphContext.isEmpty()) {
-                                            combinedContext.append("Knowledge Graph Context:\n");
-                                            combinedContext.append(graphContext);
-                                            combinedContext.append("\n\n");
-                                        }
-                                        
-                                        if (!chunks.isEmpty()) {
-                                            combinedContext.append("Supporting Text Context:\n");
-                                            combinedContext.append(formatChunkContext(chunks));
-                                        }
-                                        
-                                        return combinedContext.toString();
-                                    });
                             });
                     });
             })
-            .thenCompose(context -> {
+            .thenCompose(resultWithSources -> {
+                // Combine all sources: entities without citations, chunks with UUID citations
+                List<LightRAGQueryResult.SourceChunk> allSources = new ArrayList<>();
+                StringBuilder combinedContext = new StringBuilder();
+                
+                // Add entity sources WITHOUT citations (knowledge graph provides context only)
+                if (!resultWithSources.entitySources.isEmpty()) {
+                    combinedContext.append("Knowledge Graph Context:\n");
+                    for (LightRAGQueryResult.SourceChunk source : resultWithSources.entitySources) {
+                        combinedContext.append(source.content()).append("\n\n");
+                        allSources.add(source);
+                    }
+                }
+                
+                // Add chunk sources WITH UUID citations
+                if (!resultWithSources.chunkSources.isEmpty()) {
+                    combinedContext.append("Supporting Text Context:\n");
+                    for (LightRAGQueryResult.SourceChunk source : resultWithSources.chunkSources) {
+                        if (source.documentId() != null) {
+                            combinedContext.append(String.format("[%s] %s\n\n", 
+                                source.documentId(), source.content()));
+                        } else {
+                            combinedContext.append(source.content()).append("\n\n");
+                        }
+                        allSources.add(source);
+                    }
+                }
+                
+                String finalContext = combinedContext.toString();
+                
                 // Step 6: Build prompt and call LLM
                 if (param.isOnlyNeedContext()) {
-                    return CompletableFuture.completedFuture(context);
+                    return CompletableFuture.completedFuture(
+                        new LightRAGQueryResult(finalContext, allSources, param.getMode(), allSources.size())
+                    );
                 }
                 
-                String prompt = buildPrompt(query, context, param);
+                String prompt = buildPrompt(query, finalContext, param);
                 
                 if (param.isOnlyNeedPrompt()) {
-                    return CompletableFuture.completedFuture(prompt);
+                    return CompletableFuture.completedFuture(
+                        new LightRAGQueryResult(prompt, allSources, param.getMode(), allSources.size())
+                    );
                 }
                 
-                return llmFunction.apply(prompt, systemPrompt);
+                return llmFunction.apply(prompt, systemPrompt)
+                    .thenApply(answer -> new LightRAGQueryResult(
+                        answer,
+                        allSources,
+                        param.getMode(),
+                        allSources.size()
+                    ));
             });
+    }
+    
+    /**
+     * Helper class to carry both context and sources through the pipeline
+     */
+    private static class ResultWithSources {
+        final String graphContext;
+        final List<LightRAGQueryResult.SourceChunk> chunkSources;
+        final List<LightRAGQueryResult.SourceChunk> entitySources;
+        
+        ResultWithSources(String graphContext, 
+                         List<LightRAGQueryResult.SourceChunk> chunkSources,
+                         List<LightRAGQueryResult.SourceChunk> entitySources) {
+            this.graphContext = graphContext;
+            this.chunkSources = chunkSources;
+            this.entitySources = entitySources;
+        }
     }
     
     /**
@@ -227,17 +289,15 @@ public class MixQueryExecutor extends QueryExecutor {
     /**
      * Formats entities and relations into a readable context string.
      */
-    private String formatGraphContext(
+    private String formatGraphContextWithEntities(
         @NotNull List<Entity> entities,
         @NotNull List<Relation> relations
     ) {
         StringBuilder context = new StringBuilder();
         
         if (!entities.isEmpty()) {
-            context.append("Entities:\n");
             for (Entity entity : entities) {
-                context.append("- ")
-                    .append(entity.getEntityName())
+                context.append(entity.getEntityName())
                     .append(" (")
                     .append(entity.getEntityType())
                     .append(")");
@@ -254,8 +314,7 @@ public class MixQueryExecutor extends QueryExecutor {
         if (!relations.isEmpty()) {
             context.append("\nRelationships:\n");
             for (Relation relation : relations) {
-                context.append("- ")
-                    .append(relation.getSrcId())
+                context.append(relation.getSrcId())
                     .append(" -> ")
                     .append(relation.getTgtId());
                 

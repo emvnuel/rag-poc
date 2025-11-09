@@ -334,43 +334,74 @@ public class LightRAG {
     }
     
     /**
-     * Inserts a single document into the knowledge graph.
+     * Inserts a single document with metadata.
      *
      * @param content The document content
-     * @param metadata Optional metadata (filepath, source_id, etc.)
+     * @param metadata Optional metadata (e.g., filepath, source information)
      * @return CompletableFuture with the document ID
      */
     public CompletableFuture<String> insert(
         @NotNull String content,
         @Nullable Map<String, Object> metadata
     ) {
+        String docId = UUID.randomUUID().toString();
+        return insertWithId(docId, content, metadata);
+    }
+    
+    /**
+     * Inserts a single document with a specific document ID.
+     * If the document is already completed or processing, returns the existing docId without reprocessing.
+     *
+     * @param docId The document ID to use
+     * @param content The document content
+     * @param metadata Optional metadata (e.g., filepath, source information)
+     * @return CompletableFuture with the document ID
+     */
+    public CompletableFuture<String> insertWithId(
+        @NotNull String docId,
+        @NotNull String content,
+        @Nullable Map<String, Object> metadata
+    ) {
         ensureInitialized();
         
-        String docId = UUID.randomUUID().toString();
         String filePath = metadata != null ? (String) metadata.get("filepath") : null;
-        logger.info("Inserting document: {}", docId);
+        logger.info("Inserting document with ID: {}", docId);
         
-        // Create initial status
-        DocumentStatus pendingStatus = DocumentStatus.pending(docId, filePath);
-        DocumentStatus processingStatus = pendingStatus.asProcessing();
-        
-        return docStatusStorage.setStatus(processingStatus)
-            .thenCompose(v -> processDocument(docId, content, metadata))
-            .thenCompose(result -> {
-                // Update status to completed
-                DocumentStatus completedStatus = processingStatus.asCompleted(
-                    result.chunkCount,
-                    result.entityCount,
-                    result.relationCount
-                );
-                return docStatusStorage.setStatus(completedStatus)
-                    .thenApply(v -> docId);
-            })
-            .exceptionally(ex -> {
-                logger.error("Failed to insert document: {}", docId, ex);
-                DocumentStatus failedStatus = processingStatus.asFailed(ex.getMessage());
-                docStatusStorage.setStatus(failedStatus).join();
-                throw new RuntimeException("Document insertion failed", ex);
+        // Check if document is already processed or being processed
+        return docStatusStorage.getStatus(docId)
+            .thenCompose(existingStatus -> {
+                if (existingStatus != null) {
+                    if (existingStatus.processingStatus() == DocStatusStorage.ProcessingStatus.COMPLETED) {
+                        logger.info("Document {} already completed, skipping reprocessing", docId);
+                        return CompletableFuture.completedFuture(docId);
+                    } else if (existingStatus.processingStatus() == DocStatusStorage.ProcessingStatus.PROCESSING) {
+                        logger.warn("Document {} is already being processed, skipping duplicate processing attempt", docId);
+                        return CompletableFuture.completedFuture(docId);
+                    }
+                }
+                
+                // Create initial status
+                DocumentStatus pendingStatus = DocumentStatus.pending(docId, filePath);
+                DocumentStatus processingStatus = pendingStatus.asProcessing();
+                
+                return docStatusStorage.setStatus(processingStatus)
+                    .thenCompose(v -> processDocument(docId, content, metadata))
+                    .thenCompose(result -> {
+                        // Update status to completed
+                        DocumentStatus completedStatus = processingStatus.asCompleted(
+                            result.chunkCount,
+                            result.entityCount,
+                            result.relationCount
+                        );
+                        return docStatusStorage.setStatus(completedStatus)
+                            .thenApply(v -> docId);
+                    })
+                    .exceptionally(ex -> {
+                        logger.error("Failed to insert document: {}", docId, ex);
+                        DocumentStatus failedStatus = processingStatus.asFailed(ex.getMessage());
+                        docStatusStorage.setStatus(failedStatus).join();
+                        throw new RuntimeException("Document insertion failed", ex);
+                    });
             });
     }
     
@@ -411,9 +442,9 @@ public class LightRAG {
      *
      * @param query The query string
      * @param param Query parameters (mode, top_k, etc.)
-     * @return CompletableFuture with the response
+     * @return CompletableFuture with the query result containing answer and source chunks
      */
-    public CompletableFuture<String> query(
+    public CompletableFuture<LightRAGQueryResult> query(
         @NotNull String query,
         @NotNull QueryParam param
     ) {
@@ -832,30 +863,36 @@ public class LightRAG {
     }
     
     // Query execution methods - delegate to appropriate executors
-    private CompletableFuture<String> executeLocalQuery(String query, QueryParam param) {
+    private CompletableFuture<LightRAGQueryResult> executeLocalQuery(String query, QueryParam param) {
         return localExecutor.execute(query, param);
     }
     
-    private CompletableFuture<String> executeGlobalQuery(String query, QueryParam param) {
+    private CompletableFuture<LightRAGQueryResult> executeGlobalQuery(String query, QueryParam param) {
         return globalExecutor.execute(query, param);
     }
     
-    private CompletableFuture<String> executeHybridQuery(String query, QueryParam param) {
+    private CompletableFuture<LightRAGQueryResult> executeHybridQuery(String query, QueryParam param) {
         return hybridExecutor.execute(query, param);
     }
     
-    private CompletableFuture<String> executeNaiveQuery(String query, QueryParam param) {
+    private CompletableFuture<LightRAGQueryResult> executeNaiveQuery(String query, QueryParam param) {
         return naiveExecutor.execute(query, param);
     }
     
-    private CompletableFuture<String> executeMixQuery(String query, QueryParam param) {
+    private CompletableFuture<LightRAGQueryResult> executeMixQuery(String query, QueryParam param) {
         return mixExecutor.execute(query, param);
     }
     
-    private CompletableFuture<String> executeBypassQuery(String query, QueryParam param) {
+    private CompletableFuture<LightRAGQueryResult> executeBypassQuery(String query, QueryParam param) {
         logger.debug("Executing BYPASS query");
-        // BYPASS mode just calls LLM directly without RAG
-        return llmFunction.apply(query);
+        // BYPASS mode just calls LLM directly without RAG - no sources to return
+        return llmFunction.apply(query)
+            .thenApply(answer -> new LightRAGQueryResult(
+                answer,
+                List.of(),  // No source chunks in BYPASS mode
+                param.getMode(),
+                0
+            ));
     }
     
     private void ensureInitialized() {

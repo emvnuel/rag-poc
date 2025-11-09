@@ -3,6 +3,7 @@ package br.edu.ifba.lightrag;
 import br.edu.ifba.lightrag.adapters.QuarkusEmbeddingAdapter;
 import br.edu.ifba.lightrag.adapters.QuarkusLLMAdapter;
 import br.edu.ifba.lightrag.core.LightRAG;
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.storage.impl.AgeConfig;
 import br.edu.ifba.lightrag.storage.impl.AgeGraphStorage;
@@ -60,6 +61,9 @@ public class LightRAGService {
 
     @ConfigProperty(name = "lightrag.query.top.k", defaultValue = "10")
     int topK;
+
+    @ConfigProperty(name = "lightrag.query.chunk.top.k", defaultValue = "5")
+    int chunkTopK;
 
     @ConfigProperty(name = "lightrag.storage.working.dir", defaultValue = "./lightrag-data")
     String workingDir;
@@ -203,7 +207,7 @@ public class LightRAGService {
                 "source_id", documentId.toString()
         );
 
-        return lightRAG.insert(content, metadata)
+        return lightRAG.insertWithId(documentId.toString(), content, metadata)
                 .thenApply(lightragDocId -> {
                     LOG.infof("Document %s successfully inserted into LightRAG with ID: %s", 
                             documentId, lightragDocId);
@@ -221,9 +225,9 @@ public class LightRAGService {
      * @param query The query string
      * @param mode The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
      * @param projectId The project UUID (for filtering - currently not implemented in base LightRAG)
-     * @return CompletableFuture with the query response
+     * @return CompletableFuture with the query result containing answer and source chunks
      */
-    public CompletableFuture<String> query(
+    public CompletableFuture<LightRAGQueryResult> query(
             final String query,
             final QueryParam.Mode mode,
             final UUID projectId) {
@@ -234,13 +238,15 @@ public class LightRAGService {
         final QueryParam param = QueryParam.builder()
                 .mode(mode)
                 .topK(topK)
+                .chunkTopK(chunkTopK)
+                .projectId(projectId.toString())
                 .build();
 
         return lightRAG.query(query, param)
-                .thenApply(response -> {
-                    LOG.infof("LightRAG query completed - response length: %d characters", 
-                            response.length());
-                    return response;
+                .thenApply(result -> {
+                    LOG.infof("LightRAG query completed - answer length: %d characters, sources: %d", 
+                            result.answer().length(), result.totalSources());
+                    return result;
                 })
                 .exceptionally(ex -> {
                     LOG.errorf(ex, "Failed to execute LightRAG query");
@@ -253,10 +259,22 @@ public class LightRAGService {
      *
      * @param query The query string
      * @param projectId The project UUID
-     * @return CompletableFuture with the query response
+     * @return CompletableFuture with the query result containing answer and source chunks
      */
-    public CompletableFuture<String> query(final String query, final UUID projectId) {
+    public CompletableFuture<LightRAGQueryResult> query(final String query, final UUID projectId) {
         return query(query, QueryParam.Mode.HYBRID, projectId);
+    }
+
+    /**
+     * Checks if a document already has vectors stored in the database.
+     * This is used to prevent duplicate processing and detect race conditions.
+     *
+     * @param documentId The document UUID
+     * @return CompletableFuture<Boolean> true if the document has vectors, false otherwise
+     */
+    public CompletableFuture<Boolean> hasDocumentVectors(final UUID documentId) {
+        LOG.debugf("Checking if document %s has existing vectors", documentId);
+        return chunkVectorStorage.hasVectors(documentId.toString());
     }
 
     /**

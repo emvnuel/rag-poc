@@ -62,16 +62,31 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<Void> upsertEntity(@NotNull Entity entity) {
         return CompletableFuture.runAsync(() -> {
-            String cypher = String.format(
-                "MERGE (e:Entity {name: '%s'}) " +
-                "SET e.entity_type = '%s', e.description = '%s', e.source_id = '%s'",
-                escapeCypher(entity.getEntityName()),
-                escapeCypher(entity.getEntityType()),
-                escapeCypher(entity.getDescription()),
-                escapeCypher(entity.getSourceId())
-            );
-            
-            executeCypher(cypher);
+            try (Connection conn = config.getConnection()) {
+                conn.setAutoCommit(false);
+                
+                // WORKAROUND for Apache AGE v1.5.0 bug:
+                // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
+                // Solution: Put all properties directly in MERGE clause
+                // NOTE: This means properties won't be updated on existing entities,
+                // only set on new entities. Acceptable for current use case.
+                // TODO: After upgrading to AGE v1.5.1+, can use proper upsert logic
+                
+                String mergeCypher = String.format(
+                    "MERGE (e:Entity {name: '%s', entity_type: '%s', description: '%s', source_id: '%s'}) " +
+                    "RETURN e",
+                    escapeCypher(entity.getEntityName()),
+                    escapeCypher(entity.getEntityType()),
+                    escapeCypher(entity.getDescription()),
+                    escapeCypher(entity.getSourceId())
+                );
+                executeCypherWithConnection(conn, mergeCypher);
+                
+                conn.commit();
+            } catch (SQLException e) {
+                logger.error("Failed to upsert entity", e);
+                throw new RuntimeException("Failed to upsert entity", e);
+            }
         }, executor);
     }
     
@@ -85,17 +100,23 @@ public class AgeGraphStorage implements GraphStorage {
             try (Connection conn = config.getConnection()) {
                 conn.setAutoCommit(false);
                 
+                // WORKAROUND for Apache AGE v1.5.0 bug:
+                // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
+                // Solution: Put all properties directly in MERGE clause
+                // NOTE: This means properties won't be updated on existing entities,
+                // only set on new entities. Acceptable for current use case.
+                // TODO: After upgrading to AGE v1.5.1+, can use proper upsert logic
+                
                 for (Entity entity : entities) {
-                    String cypher = String.format(
-                        "MERGE (e:Entity {name: '%s'}) " +
-                        "SET e.entity_type = '%s', e.description = '%s', e.source_id = '%s'",
+                    String mergeCypher = String.format(
+                        "MERGE (e:Entity {name: '%s', entity_type: '%s', description: '%s', source_id: '%s'}) " +
+                        "RETURN e",
                         escapeCypher(entity.getEntityName()),
                         escapeCypher(entity.getEntityType()),
                         escapeCypher(entity.getDescription()),
                         escapeCypher(entity.getSourceId())
                     );
-                    
-                    executeCypherWithConnection(conn, cypher);
+                    executeCypherWithConnection(conn, mergeCypher);
                 }
                 
                 conn.commit();
@@ -111,21 +132,41 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<Void> upsertRelation(@NotNull Relation relation) {
         return CompletableFuture.runAsync(() -> {
-            // Combine entity creation and relation creation in a single query
-            String cypher = String.format(Locale.US,
-                "MERGE (src:Entity {name: '%s'}) " +
-                "MERGE (tgt:Entity {name: '%s'}) " +
-                "MERGE (src)-[r:RELATED_TO]->(tgt) " +
-                "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.source_id = '%s'",
-                escapeCypher(relation.getSrcId()),
-                escapeCypher(relation.getTgtId()),
-                escapeCypher(relation.getDescription()),
-                escapeCypher(relation.getKeywords()),
-                relation.getWeight(),
-                escapeCypher(relation.getSourceId())
-            );
-            
-            executeCypher(cypher);
+            try (Connection conn = config.getConnection()) {
+                conn.setAutoCommit(false);
+                
+                try {
+                    // WORKAROUND for Apache AGE v1.5.0 bug:
+                    // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
+                    // Solution: Use MERGE with all properties directly (no update on existing)
+                    // NOTE: Properties won't update on existing relations, only set on creation
+                    // TODO: Remove this workaround after upgrading to AGE v1.5.1+ or v1.6.0+
+                    
+                    // Use MERGE with all properties in the match pattern and property map
+                    String mergeCypher = String.format(Locale.US,
+                        "MERGE (src:Entity {name: '%s'}) " +
+                        "MERGE (tgt:Entity {name: '%s'}) " +
+                        "MERGE (src)-[r:RELATED_TO {description: '%s', keywords: '%s', weight: %f, source_id: '%s'}]->(tgt) " +
+                        "RETURN r",
+                        escapeCypher(relation.getSrcId()),
+                        escapeCypher(relation.getTgtId()),
+                        escapeCypher(relation.getDescription()),
+                        escapeCypher(relation.getKeywords()),
+                        relation.getWeight(),
+                        escapeCypher(relation.getSourceId())
+                    );
+                    executeCypherWithConnection(conn, mergeCypher);
+                    
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    logger.error("Failed to upsert relation: src={}, tgt={}", 
+                        relation.getSrcId(), relation.getTgtId(), e);
+                    throw e;
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to upsert relation", e);
+            }
         }, executor);
     }
     
@@ -139,28 +180,39 @@ public class AgeGraphStorage implements GraphStorage {
             try (Connection conn = config.getConnection()) {
                 conn.setAutoCommit(false);
                 
-                for (Relation relation : relations) {
-                    // Combine entity creation and relation creation in a single query
-                    String cypher = String.format(Locale.US,
-                        "MERGE (src:Entity {name: '%s'}) " +
-                        "MERGE (tgt:Entity {name: '%s'}) " +
-                        "MERGE (src)-[r:RELATED_TO]->(tgt) " +
-                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.source_id = '%s'",
-                        escapeCypher(relation.getSrcId()),
-                        escapeCypher(relation.getTgtId()),
-                        escapeCypher(relation.getDescription()),
-                        escapeCypher(relation.getKeywords()),
-                        relation.getWeight(),
-                        escapeCypher(relation.getSourceId())
-                    );
-                    executeCypherWithConnection(conn, cypher);
+                try {
+                    // WORKAROUND for Apache AGE v1.5.0 bug:
+                    // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
+                    // Solution: Use MERGE with all properties directly (no update on existing)
+                    // NOTE: Properties won't update on existing relations, only set on creation
+                    // TODO: Remove this workaround after upgrading to AGE v1.5.1+ or v1.6.0+
+                    
+                    for (Relation relation : relations) {
+                        // Use MERGE with all properties in the match pattern and property map
+                        String mergeCypher = String.format(Locale.US,
+                            "MERGE (src:Entity {name: '%s'}) " +
+                            "MERGE (tgt:Entity {name: '%s'}) " +
+                            "MERGE (src)-[r:RELATED_TO {description: '%s', keywords: '%s', weight: %f, source_id: '%s'}]->(tgt) " +
+                            "RETURN r",
+                            escapeCypher(relation.getSrcId()),
+                            escapeCypher(relation.getTgtId()),
+                            escapeCypher(relation.getDescription()),
+                            escapeCypher(relation.getKeywords()),
+                            relation.getWeight(),
+                            escapeCypher(relation.getSourceId())
+                        );
+                        executeCypherWithConnection(conn, mergeCypher);
+                    }
+                    
+                    conn.commit();
+                    logger.debug("Upserted {} relations", relations.size());
+                } catch (SQLException e) {
+                    conn.rollback();
+                    logger.error("Failed to upsert relations", e);
+                    throw e;
                 }
                 
-                conn.commit();
-                logger.debug("Upserted {} relations", relations.size());
-                
             } catch (SQLException e) {
-                logger.error("Failed to upsert relations", e);
                 throw new RuntimeException("Failed to upsert relations", e);
             }
         }, executor);
@@ -416,18 +468,49 @@ public class AgeGraphStorage implements GraphStorage {
     
     /**
      * Executes a Cypher query with an existing connection.
+     * Note: Must consume ResultSet to ensure query execution completes in AGE.
+     * Automatically determines the result signature based on query type.
      */
     private void executeCypherWithConnection(Connection conn, String cypher) throws SQLException {
+        // Determine the result signature based on the query
+        String resultSignature;
+        if (cypher.contains("RETURN src, tgt, r")) {
+            resultSignature = "src agtype, tgt agtype, r agtype";
+        } else if (cypher.contains("RETURN src, tgt")) {
+            resultSignature = "src agtype, tgt agtype";
+        } else if (cypher.contains("RETURN e")) {
+            resultSignature = "e agtype";
+        } else if (cypher.contains("RETURN r")) {
+            resultSignature = "r agtype";
+        } else if (cypher.contains("RETURN")) {
+            resultSignature = "result agtype";
+        } else {
+            // For DELETE and other non-returning queries
+            resultSignature = "result agtype";
+        }
+        
         String sql = String.format(
-            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)",
+            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (%s)",
             config.getGraphName(),
-            cypher
+            cypher,
+            resultSignature
         );
         
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("LOAD 'age'");
             stmt.execute("SET search_path = ag_catalog, \"$user\", public");
-            stmt.execute(sql);
+            
+            // Execute and consume result set (required for proper execution in AGE)
+            try (ResultSet rs = stmt.executeQuery(sql)) {
+                while (rs.next()) {
+                    // Consume result set - this is required for AGE to commit changes
+                }
+            } catch (SQLException e) {
+                // Log the failing query for debugging
+                logger.error("Failed to execute Cypher query. Query: {}", 
+                    cypher.length() > 200 ? cypher.substring(0, 200) + "..." : cypher, e);
+                throw e;
+            }
         }
     }
     

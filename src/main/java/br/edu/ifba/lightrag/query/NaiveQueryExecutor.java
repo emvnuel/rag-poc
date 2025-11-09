@@ -1,5 +1,6 @@
 package br.edu.ifba.lightrag.query;
 
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import br.edu.ifba.lightrag.llm.LLMFunction;
@@ -34,7 +35,7 @@ public class NaiveQueryExecutor extends QueryExecutor {
     }
     
     @Override
-    public CompletableFuture<String> execute(
+    public CompletableFuture<LightRAGQueryResult> execute(
         @NotNull String query,
         @NotNull QueryParam param
     ) {
@@ -49,42 +50,43 @@ public class NaiveQueryExecutor extends QueryExecutor {
                 return embeddingFunction.embedSingle(query)
                     .thenCompose(queryEmbedding -> {
                         int topK = Math.min(param.getChunkTopK(), 5); // Use fewer results for naive
-                        return chunkVectorStorage.query(queryEmbedding, topK, null);
+                        VectorStorage.VectorFilter filter = new VectorStorage.VectorFilter(
+                            "chunk", 
+                            null, 
+                            param.getProjectId()
+                        );
+                        return chunkVectorStorage.query(queryEmbedding, topK, filter);
                     });
             })
             .thenCompose(results -> {
-                // Retrieve chunk contents
-                List<CompletableFuture<String>> chunkFutures = new ArrayList<>();
-                for (VectorStorage.VectorSearchResult result : results) {
-                    String content = result.metadata().content();
-                    if (content != null && !content.isEmpty()) {
-                        chunkFutures.add(CompletableFuture.completedFuture(content));
-                    } else {
-                        chunkFutures.add(chunkStorage.get(result.id()));
-                    }
-                }
+                // Convert to source chunks
+                List<LightRAGQueryResult.SourceChunk> sourceChunks = convertToSourceChunks(results);
                 
-                return CompletableFuture.allOf(chunkFutures.toArray(new CompletableFuture[0]))
-                    .thenApply(v -> chunkFutures.stream()
-                        .map(CompletableFuture::join)
-                        .filter(c -> c != null && !c.isEmpty())
-                        .toList());
-            })
-            .thenCompose(chunks -> {
-                String context = formatChunkContext(chunks);
+                // Build context with citations
+                String context = formatChunkContextWithCitations(results);
                 
                 if (param.isOnlyNeedContext()) {
-                    return CompletableFuture.completedFuture(context);
+                    return CompletableFuture.completedFuture(
+                        new LightRAGQueryResult(context, sourceChunks, param.getMode(), sourceChunks.size())
+                    );
                 }
                 
                 String prompt = buildPrompt(query, context, param);
                 
                 if (param.isOnlyNeedPrompt()) {
-                    return CompletableFuture.completedFuture(prompt);
+                    return CompletableFuture.completedFuture(
+                        new LightRAGQueryResult(prompt, sourceChunks, param.getMode(), sourceChunks.size())
+                    );
                 }
                 
                 // Call LLM with system prompt
-                return llmFunction.apply(prompt, systemPrompt);
+                return llmFunction.apply(prompt, systemPrompt)
+                    .thenApply(answer -> new LightRAGQueryResult(
+                        answer,
+                        sourceChunks,
+                        param.getMode(),
+                        sourceChunks.size()
+                    ));
             });
     }
 }

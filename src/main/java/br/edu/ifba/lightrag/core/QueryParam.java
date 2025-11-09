@@ -80,6 +80,9 @@ public final class QueryParam {
     
     private final boolean enableRerank;
     
+    @NotNull
+    private final String projectId;
+    
     private QueryParam(Builder builder) {
         this.mode = builder.mode;
         this.onlyNeedContext = builder.onlyNeedContext;
@@ -95,6 +98,7 @@ public final class QueryParam {
         this.ids = builder.ids != null ? new ArrayList<>(builder.ids) : null;
         this.userPrompt = builder.userPrompt;
         this.enableRerank = builder.enableRerank;
+        this.projectId = builder.projectId;
     }
     
     @NotNull
@@ -158,6 +162,11 @@ public final class QueryParam {
         return enableRerank;
     }
     
+    @NotNull
+    public String getProjectId() {
+        return projectId;
+    }
+    
     /**
      * Represents a conversation message in history.
      */
@@ -186,6 +195,7 @@ public final class QueryParam {
         private List<String> ids = null;
         private String userPrompt = null;
         private boolean enableRerank = true;
+        private String projectId = null;
         
         public Builder mode(@NotNull Mode mode) {
             this.mode = Objects.requireNonNull(mode, "mode must not be null");
@@ -262,7 +272,13 @@ public final class QueryParam {
             return this;
         }
         
+        public Builder projectId(@NotNull String projectId) {
+            this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
+            return this;
+        }
+        
         public QueryParam build() {
+            Objects.requireNonNull(projectId, "projectId must not be null");
             return new QueryParam(this);
         }
     }

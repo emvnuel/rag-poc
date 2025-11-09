@@ -45,6 +45,7 @@ RUN apt-get purge -y --auto-remove \
 COPY docker-init/01-init-pgvector.sql /docker-entrypoint-initdb.d/
 COPY docker-init/02-init-age.sql /docker-entrypoint-initdb.d/
 COPY docker-init/03-init-schema.sql /docker-entrypoint-initdb.d/
+COPY docker-init/04-add-chunk-uniqueness-constraint.sql /docker-entrypoint-initdb.d/
 
 # Note: We don't add AGE to shared_preload_libraries to avoid conflicts with pgvector
 # AGE will be loaded explicitly in the init script after pgvector is created

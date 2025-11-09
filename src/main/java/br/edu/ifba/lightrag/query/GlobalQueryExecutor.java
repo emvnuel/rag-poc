@@ -1,6 +1,8 @@
 package br.edu.ifba.lightrag.query;
 
 import br.edu.ifba.lightrag.core.Entity;
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
+import br.edu.ifba.lightrag.core.LightRAGQueryResult.SourceChunk;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.core.Relation;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
@@ -11,6 +13,7 @@ import br.edu.ifba.lightrag.storage.VectorStorage;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -36,7 +39,7 @@ public class GlobalQueryExecutor extends QueryExecutor {
     }
     
     @Override
-    public CompletableFuture<String> execute(
+    public CompletableFuture<LightRAGQueryResult> execute(
         @NotNull String query,
         @NotNull QueryParam param
     ) {
@@ -45,18 +48,28 @@ public class GlobalQueryExecutor extends QueryExecutor {
         // Step 1: Embed the query
         return embeddingFunction.embedSingle(query)
             .thenCompose(queryEmbedding -> {
-                // Step 2: Search for similar entities
+                // Step 2: Search for similar entities with project filter
                 int topK = param.getTopK();
-                return entityVectorStorage.query(queryEmbedding, topK, null);
+                VectorStorage.VectorFilter filter = new VectorStorage.VectorFilter(
+                    "entity", 
+                    null, 
+                    param.getProjectId()
+                );
+                return entityVectorStorage.query(queryEmbedding, topK, filter);
             })
-            .thenCompose(results -> {
+            .thenCompose(entityResults -> {
                 // Step 3: Extract entity IDs from results
-                List<String> entityIds = results.stream()
+                List<String> entityIds = entityResults.stream()
                     .map(VectorStorage.VectorSearchResult::id)
                     .toList();
                 
                 if (entityIds.isEmpty()) {
-                    return CompletableFuture.completedFuture("");
+                    return CompletableFuture.completedFuture(new LightRAGQueryResult(
+                        "",
+                        Collections.emptyList(),
+                        QueryParam.Mode.GLOBAL,
+                        0
+                    ));
                 }
                 
                 // Step 4: Get entities and their relationships from graph
@@ -68,20 +81,20 @@ public class GlobalQueryExecutor extends QueryExecutor {
                     }
                     
                     return CompletableFuture.allOf(relationFutures.toArray(new CompletableFuture[0]))
-                        .thenApply(v -> {
+                        .thenCompose(v -> {
                             // Combine all relations
                             List<Relation> allRelations = relationFutures.stream()
                                 .flatMap(f -> f.join().stream())
                                 .distinct() // Remove duplicates
                                 .toList();
                             
-                            // Format entities and relations as context
+                            // Format entities and relations as context WITHOUT citations
+                            // Entities don't have document UUIDs, so they provide background context only
                             StringBuilder context = new StringBuilder();
                             
                             context.append("Entities:\n");
                             for (Entity entity : entities) {
-                                context.append("- ")
-                                    .append(entity.getEntityName())
+                                context.append(entity.getEntityName())
                                     .append(" (")
                                     .append(entity.getEntityType())
                                     .append("): ")
@@ -100,23 +113,55 @@ public class GlobalQueryExecutor extends QueryExecutor {
                                     .append("\n");
                             }
                             
-                            return context.toString();
+                            // Convert entity results to source chunks
+                            List<SourceChunk> sourceChunks = new ArrayList<>();
+                            for (int i = 0; i < entityResults.size() && i < entities.size(); i++) {
+                                VectorStorage.VectorSearchResult result = entityResults.get(i);
+                                Entity entity = entities.get(i);
+                                
+                                sourceChunks.add(new SourceChunk(
+                                    result.id(),                          // chunkId (entity ID)
+                                    entity.getDescription(),              // content
+                                    result.score(),                       // relevanceScore
+                                    null,                                 // documentId (not applicable for entities)
+                                    entity.getSourceId(),                 // sourceId
+                                    0,                                    // chunkIndex (not applicable)
+                                    "entity"                              // type
+                                ));
+                            }
+                            
+                            String contextStr = context.toString();
+                            
+                            // Step 5: Build prompt and call LLM
+                            if (param.isOnlyNeedContext()) {
+                                return CompletableFuture.completedFuture(new LightRAGQueryResult(
+                                    contextStr,
+                                    sourceChunks,
+                                    QueryParam.Mode.GLOBAL,
+                                    sourceChunks.size()
+                                ));
+                            }
+                            
+                            String prompt = buildPrompt(query, contextStr, param);
+                            
+                            if (param.isOnlyNeedPrompt()) {
+                                return CompletableFuture.completedFuture(new LightRAGQueryResult(
+                                    prompt,
+                                    sourceChunks,
+                                    QueryParam.Mode.GLOBAL,
+                                    sourceChunks.size()
+                                ));
+                            }
+                            
+                            return llmFunction.apply(prompt, systemPrompt)
+                                .thenApply(answer -> new LightRAGQueryResult(
+                                    answer,
+                                    sourceChunks,
+                                    QueryParam.Mode.GLOBAL,
+                                    sourceChunks.size()
+                                ));
                         });
                 });
-            })
-            .thenCompose(context -> {
-                // Step 5: Build prompt and call LLM
-                if (param.isOnlyNeedContext()) {
-                    return CompletableFuture.completedFuture(context);
-                }
-                
-                String prompt = buildPrompt(query, context, param);
-                
-                if (param.isOnlyNeedPrompt()) {
-                    return CompletableFuture.completedFuture(prompt);
-                }
-                
-                return llmFunction.apply(prompt, systemPrompt);
             });
     }
 }

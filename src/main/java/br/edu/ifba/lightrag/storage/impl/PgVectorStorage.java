@@ -160,7 +160,19 @@ public class PgVectorStorage implements VectorStorage {
                     }
                     pstmt.setInt(7, metadata.chunkIndex() != null ? metadata.chunkIndex() : 0);
                     
-                    pstmt.executeUpdate();
+                    try {
+                        pstmt.executeUpdate();
+                    } catch (SQLException e) {
+                        // Check if it's a unique constraint violation (SQL state 23505)
+                        if ("23505".equals(e.getSQLState())) {
+                            logger.warn("Duplicate vector detected for id: {}, document_id: {}, chunk_index: {} - skipping insert", 
+                                       id, metadata.documentId(), metadata.chunkIndex());
+                            // Don't throw - this is expected behavior with the uniqueness constraint
+                            return;
+                        }
+                        // Re-throw other SQL exceptions
+                        throw e;
+                    }
                 }
                 
             } catch (SQLException e) {
@@ -193,6 +205,7 @@ public class PgVectorStorage implements VectorStorage {
                     """, tableName);
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    int duplicateCount = 0;
                     for (VectorEntry entry : entries) {
                         pstmt.setObject(1, UUID.fromString(entry.id()));
                         pstmt.setString(2, vectorToString(entry.vector()));
@@ -208,10 +221,22 @@ public class PgVectorStorage implements VectorStorage {
                         pstmt.addBatch();
                     }
                     
-                    pstmt.executeBatch();
-                    conn.commit();
-                    
-                    logger.debug("Upserted {} vectors", entries.size());
+                    try {
+                        pstmt.executeBatch();
+                        conn.commit();
+                        logger.debug("Upserted {} vectors", entries.size());
+                    } catch (SQLException e) {
+                        // Check if it's a unique constraint violation
+                        if ("23505".equals(e.getSQLState())) {
+                            duplicateCount++;
+                            logger.warn("Batch upsert encountered {} duplicate vectors - constraint prevented duplicates", duplicateCount);
+                            conn.rollback();
+                            // Don't throw - log and continue
+                            return;
+                        }
+                        // Re-throw other SQL exceptions
+                        throw e;
+                    }
                 }
                 
             } catch (SQLException e) {
@@ -231,19 +256,27 @@ public class PgVectorStorage implements VectorStorage {
             List<VectorSearchResult> results = new ArrayList<>();
             
             try (Connection conn = dataSource.getConnection()) {
-                // Build query with optional filter
+                // Build query with JOIN to documents table for project filtering
                 StringBuilder sqlBuilder = new StringBuilder();
                 sqlBuilder.append(String.format("""
-                    SELECT id, type, content, source_id, document_id, chunk_index,
-                           1 - (vector <=> ?::vector) AS similarity
-                    FROM %s
+                    SELECT v.id, v.type, v.content, v.source_id, v.document_id, v.chunk_index,
+                           1 - (v.vector <=> ?::vector) AS similarity
+                    FROM %s v
+                    LEFT JOIN documents d ON v.document_id = d.id
+                    WHERE 1=1
                     """, tableName));
                 
+                // Filter by type if provided
                 if (filter != null && filter.type() != null) {
-                    sqlBuilder.append(" WHERE type = ?");
+                    sqlBuilder.append(" AND v.type = ?");
                 }
                 
-                sqlBuilder.append(" ORDER BY vector <=> ?::vector");
+                // Filter by projectId (REQUIRED)
+                if (filter != null && filter.projectId() != null) {
+                    sqlBuilder.append(" AND d.project_id = ?::uuid");
+                }
+                
+                sqlBuilder.append(" ORDER BY v.vector <=> ?::vector");
                 sqlBuilder.append(" LIMIT ?");
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sqlBuilder.toString())) {
@@ -254,6 +287,10 @@ public class PgVectorStorage implements VectorStorage {
                     
                     if (filter != null && filter.type() != null) {
                         pstmt.setString(paramIndex++, filter.type());
+                    }
+                    
+                    if (filter != null && filter.projectId() != null) {
+                        pstmt.setString(paramIndex++, filter.projectId());
                     }
                     
                     pstmt.setString(paramIndex++, vectorStr);
@@ -424,6 +461,41 @@ public class PgVectorStorage implements VectorStorage {
     public void close() throws Exception {
         executor.shutdown();
         // DataSource is managed by Quarkus, no need to close
+    }
+    
+    /**
+     * Checks if a document already has vectors in the database.
+     * This is used to prevent duplicate processing and detect race conditions.
+     * 
+     * @param documentId The document UUID
+     * @return CompletableFuture<Boolean> true if vectors exist, false otherwise
+     */
+    public CompletableFuture<Boolean> hasVectors(String documentId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection()) {
+                String sql = String.format(
+                    "SELECT COUNT(*) > 0 FROM %s WHERE document_id = ?::uuid AND type = 'chunk'",
+                    tableName
+                );
+                
+                try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    pstmt.setString(1, documentId);
+                    ResultSet rs = pstmt.executeQuery();
+                    
+                    if (rs.next()) {
+                        boolean hasVectors = rs.getBoolean(1);
+                        logger.debug("Document {} has vectors: {}", documentId, hasVectors);
+                        return hasVectors;
+                    }
+                    
+                    return false;
+                }
+                
+            } catch (SQLException e) {
+                logger.error("Failed to check vectors for document: {}", documentId, e);
+                return false;
+            }
+        }, executor);
     }
     
     // ========== Helper Methods ==========

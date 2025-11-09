@@ -1,5 +1,7 @@
 package br.edu.ifba.lightrag.query;
 
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
+import br.edu.ifba.lightrag.core.LightRAGQueryResult.SourceChunk;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import br.edu.ifba.lightrag.llm.LLMFunction;
@@ -10,6 +12,8 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -44,13 +48,13 @@ public abstract class QueryExecutor {
     }
     
     /**
-     * Executes a query and returns the result.
+     * Executes a query and returns the result with source chunks.
      *
      * @param query The user's query string
      * @param param Query parameters
-     * @return CompletableFuture with the query response
+     * @return CompletableFuture with the query result including answer and sources
      */
-    public abstract CompletableFuture<String> execute(
+    public abstract CompletableFuture<LightRAGQueryResult> execute(
         @NotNull String query,
         @NotNull QueryParam param
     );
@@ -107,5 +111,84 @@ public abstract class QueryExecutor {
         }
         
         return context.toString();
+    }
+    
+    /**
+     * Formats context from vector search results with UUID citations.
+     * This allows the LLM to reference sources using document UUIDs like [a1b2c3d4-...].
+     * Only includes citations for chunks with valid documentId.
+     *
+     * @param results List of vector search results
+     * @return Formatted context string with UUID citations
+     */
+    protected String formatChunkContextWithCitations(@NotNull List<VectorStorage.VectorSearchResult> results) {
+        if (results.isEmpty()) {
+            return "";
+        }
+        
+        StringBuilder context = new StringBuilder();
+        for (VectorStorage.VectorSearchResult result : results) {
+            VectorStorage.VectorMetadata metadata = result.metadata();
+            String content = metadata.content();
+            String documentId = metadata.documentId();
+            
+            // Only include citation if documentId is available
+            if (content != null && !content.isEmpty() && documentId != null) {
+                context.append("[").append(documentId).append("] ").append(content).append("\n\n");
+            } else if (content != null && !content.isEmpty()) {
+                // Include content without citation if no documentId
+                context.append(content).append("\n\n");
+            }
+        }
+        
+        return context.toString();
+    }
+    
+    /**
+     * Formats context from vector search results WITHOUT citations.
+     * Used for GLOBAL mode where entities don't have direct document references.
+     *
+     * @param results List of vector search results
+     * @return Formatted context string without citations
+     */
+    protected String formatContextWithoutCitations(@NotNull List<VectorStorage.VectorSearchResult> results) {
+        if (results.isEmpty()) {
+            return "";
+        }
+        
+        StringBuilder context = new StringBuilder();
+        for (VectorStorage.VectorSearchResult result : results) {
+            String content = result.metadata().content();
+            if (content != null && !content.isEmpty()) {
+                context.append(content).append("\n\n");
+            }
+        }
+        
+        return context.toString();
+    }
+    
+    /**
+     * Converts vector search results to source chunks for the query result.
+     *
+     * @param results List of vector search results
+     * @return List of source chunks with metadata
+     */
+    protected List<SourceChunk> convertToSourceChunks(@NotNull List<VectorStorage.VectorSearchResult> results) {
+        List<SourceChunk> sourceChunks = new ArrayList<>();
+        
+        for (VectorStorage.VectorSearchResult result : results) {
+            VectorStorage.VectorMetadata metadata = result.metadata();
+            sourceChunks.add(new SourceChunk(
+                result.id(),                          // chunkId
+                metadata.content(),                   // content
+                result.score(),                       // relevanceScore
+                metadata.documentId(),                // documentId (UUID from document table)
+                metadata.sourceId(),                  // sourceId (LightRAG doc ID)
+                metadata.chunkIndex(),                // chunkIndex
+                metadata.type()                       // type (e.g., "chunk", "entity")
+            ));
+        }
+        
+        return sourceChunks;
     }
 }

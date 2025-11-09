@@ -70,6 +70,16 @@ public class DocumentProcessorJob {
                 return;
             }
 
+            // PRE-CHECK: Query database to see if vectors already exist
+            // This prevents duplicate processing in case of race conditions
+            boolean hasVectors = lightragService.hasDocumentVectors(documentId).join();
+            if (hasVectors) {
+                LOG.infof("Document %s already has vectors in database (detected race condition), skipping LightRAG processing", 
+                         documentId);
+                markAsProcessed(documentId);
+                return;
+            }
+
             LOG.infof("Processing document %s through LightRAG - fileName: %s, projectId: %s", 
                     documentId, document.getFileName(), document.getProject().getId());
             

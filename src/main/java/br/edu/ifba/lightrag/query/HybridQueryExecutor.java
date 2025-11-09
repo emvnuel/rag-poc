@@ -1,5 +1,6 @@
 package br.edu.ifba.lightrag.query;
 
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import br.edu.ifba.lightrag.llm.LLMFunction;
@@ -8,6 +9,8 @@ import br.edu.ifba.lightrag.storage.KVStorage;
 import br.edu.ifba.lightrag.storage.VectorStorage;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -42,57 +45,73 @@ public class HybridQueryExecutor extends QueryExecutor {
     }
     
     @Override
-    public CompletableFuture<String> execute(
+    public CompletableFuture<LightRAGQueryResult> execute(
         @NotNull String query,
         @NotNull QueryParam param
     ) {
         logger.info("Executing HYBRID query");
         
-        // Create modified params to get context only
-        QueryParam contextParam = QueryParam.builder()
-            .mode(QueryParam.Mode.HYBRID)
-            .onlyNeedContext(true)
-            .topK(param.getTopK())
-            .chunkTopK(param.getChunkTopK())
-            .build();
-        
         // Execute both local and global retrieval in parallel
-        CompletableFuture<String> localContext = localExecutor.execute(query, contextParam);
-        CompletableFuture<String> globalContext = globalExecutor.execute(query, contextParam);
+        CompletableFuture<LightRAGQueryResult> localResult = localExecutor.execute(query, param);
+        CompletableFuture<LightRAGQueryResult> globalResult = globalExecutor.execute(query, param);
         
-        return CompletableFuture.allOf(localContext, globalContext)
+        return CompletableFuture.allOf(localResult, globalResult)
             .thenCompose(v -> {
-                String localCtx = localContext.join();
-                String globalCtx = globalContext.join();
+                LightRAGQueryResult localRes = localResult.join();
+                LightRAGQueryResult globalRes = globalResult.join();
                 
-                // Combine contexts
+                // Combine source chunks from both executors
+                List<LightRAGQueryResult.SourceChunk> combinedSources = new ArrayList<>();
+                combinedSources.addAll(localRes.sourceChunks());
+                combinedSources.addAll(globalRes.sourceChunks());
+                
+                // Build combined context with UUID citations for LOCAL chunks, no citations for GLOBAL entities
                 StringBuilder combinedContext = new StringBuilder();
                 
-                if (!localCtx.isEmpty()) {
+                if (!localRes.sourceChunks().isEmpty()) {
                     combinedContext.append("Local Context (Text Chunks):\n");
-                    combinedContext.append(localCtx);
-                    combinedContext.append("\n");
+                    for (LightRAGQueryResult.SourceChunk chunk : localRes.sourceChunks()) {
+                        // LOCAL chunks: Use UUID citations if documentId is available
+                        if (chunk.documentId() != null) {
+                            combinedContext.append(String.format("[%s] %s\n\n", chunk.documentId(), chunk.content()));
+                        } else {
+                            combinedContext.append(chunk.content()).append("\n\n");
+                        }
+                    }
                 }
                 
-                if (!globalCtx.isEmpty()) {
+                if (!globalRes.sourceChunks().isEmpty()) {
                     combinedContext.append("Global Context (Knowledge Graph):\n");
-                    combinedContext.append(globalCtx);
+                    for (LightRAGQueryResult.SourceChunk chunk : globalRes.sourceChunks()) {
+                        // GLOBAL entities: No citations, just context
+                        combinedContext.append(chunk.content()).append("\n\n");
+                    }
                 }
                 
                 String finalContext = combinedContext.toString();
                 
                 if (param.isOnlyNeedContext()) {
-                    return CompletableFuture.completedFuture(finalContext);
+                    return CompletableFuture.completedFuture(
+                        new LightRAGQueryResult(finalContext, combinedSources, param.getMode(), combinedSources.size())
+                    );
                 }
                 
                 String prompt = buildPrompt(query, finalContext, param);
                 
                 if (param.isOnlyNeedPrompt()) {
-                    return CompletableFuture.completedFuture(prompt);
+                    return CompletableFuture.completedFuture(
+                        new LightRAGQueryResult(prompt, combinedSources, param.getMode(), combinedSources.size())
+                    );
                 }
                 
                 // Call LLM with combined context
-                return llmFunction.apply(prompt, systemPrompt);
+                return llmFunction.apply(prompt, systemPrompt)
+                    .thenApply(answer -> new LightRAGQueryResult(
+                        answer,
+                        combinedSources,
+                        param.getMode(),
+                        combinedSources.size()
+                    ));
             });
     }
 }

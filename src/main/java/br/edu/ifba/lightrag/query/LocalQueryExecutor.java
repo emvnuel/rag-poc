@@ -1,5 +1,6 @@
 package br.edu.ifba.lightrag.query;
 
+import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import br.edu.ifba.lightrag.llm.LLMFunction;
@@ -9,6 +10,7 @@ import br.edu.ifba.lightrag.storage.VectorStorage;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -34,7 +36,7 @@ public class LocalQueryExecutor extends QueryExecutor {
     }
     
     @Override
-    public CompletableFuture<String> execute(
+    public CompletableFuture<LightRAGQueryResult> execute(
         @NotNull String query,
         @NotNull QueryParam param
     ) {
@@ -43,46 +45,49 @@ public class LocalQueryExecutor extends QueryExecutor {
         // Step 1: Embed the query
         return embeddingFunction.embedSingle(query)
             .thenCompose(queryEmbedding -> {
-                // Step 2: Search for similar chunks
+                // Step 2: Search for similar chunks with project filter
                 int topK = param.getChunkTopK();
-                return chunkVectorStorage.query(queryEmbedding, topK, null);
+                VectorStorage.VectorFilter filter = new VectorStorage.VectorFilter(
+                    "chunk", 
+                    null, 
+                    param.getProjectId()
+                );
+                return chunkVectorStorage.query(queryEmbedding, topK, filter);
             })
             .thenCompose(results -> {
-                // Step 3: Retrieve chunk contents
-                List<CompletableFuture<String>> chunkFutures = new ArrayList<>();
-                for (VectorStorage.VectorSearchResult result : results) {
-                    // Try to get content from metadata first (faster)
-                    String content = result.metadata().content();
-                    if (content != null && !content.isEmpty()) {
-                        chunkFutures.add(CompletableFuture.completedFuture(content));
-                    } else {
-                        // Fallback to storage lookup
-                        chunkFutures.add(chunkStorage.get(result.id()));
-                    }
-                }
-                
-                return CompletableFuture.allOf(chunkFutures.toArray(new CompletableFuture[0]))
-                    .thenApply(v -> chunkFutures.stream()
-                        .map(CompletableFuture::join)
-                        .filter(c -> c != null && !c.isEmpty())
-                        .toList());
-            })
-            .thenCompose(chunks -> {
-                // Step 4: Build context and prompt
-                String context = formatChunkContext(chunks);
+                // Step 3: Build context and prompt with citations
+                String context = formatChunkContextWithCitations(results);
                 
                 if (param.isOnlyNeedContext()) {
-                    return CompletableFuture.completedFuture(context);
+                    // Return only context (for compatibility)
+                    return CompletableFuture.completedFuture(new LightRAGQueryResult(
+                        context,
+                        convertToSourceChunks(results),
+                        QueryParam.Mode.LOCAL,
+                        results.size()
+                    ));
                 }
                 
                 String prompt = buildPrompt(query, context, param);
                 
                 if (param.isOnlyNeedPrompt()) {
-                    return CompletableFuture.completedFuture(prompt);
+                    // Return only prompt (for compatibility)
+                    return CompletableFuture.completedFuture(new LightRAGQueryResult(
+                        prompt,
+                        convertToSourceChunks(results),
+                        QueryParam.Mode.LOCAL,
+                        results.size()
+                    ));
                 }
                 
-                // Step 5: Call LLM with context
-                return llmFunction.apply(prompt, systemPrompt);
+                // Step 4: Call LLM with context
+                return llmFunction.apply(prompt, systemPrompt)
+                    .thenApply(answer -> new LightRAGQueryResult(
+                        answer,
+                        convertToSourceChunks(results),
+                        QueryParam.Mode.LOCAL,
+                        results.size()
+                    ));
             });
     }
 }

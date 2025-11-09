@@ -114,8 +114,15 @@ public interface VectorStorage extends AutoCloseable {
     
     /**
      * Represents a filter for vector queries.
+     * 
+     * @param type the type of vectors to filter (e.g., "chunk", "entity", "relation")
+     * @param ids specific vector IDs to filter by
+     * @param projectId the project UUID to filter vectors by (for multi-tenancy isolation)
      */
-    record VectorFilter(String type, List<String> ids) {
+    record VectorFilter(
+            String type, 
+            List<String> ids, 
+            @NotNull String projectId) {
     }
     
     /**
