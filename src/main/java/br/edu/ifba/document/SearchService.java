@@ -33,13 +33,13 @@ public class SearchService {
     /**
      * Searches documents using LightRAG knowledge graph query.
      * Returns both the synthesized answer AND the source chunks used to generate it.
+     * The number of chunks returned is controlled by lightrag.query.chunk.top.k configuration.
      * 
      * @param query The search query
      * @param projectId The project UUID to search within
-     * @param maxResults Maximum number of source results to return (limits source chunks)
      * @return SearchResponse with the answer and source chunks as SearchResults with citations
      */
-    public SearchResponse search(final String query, final UUID projectId, final Integer maxResults) {
+    public SearchResponse search(final String query, final UUID projectId) {
         LOG.infof("Executing LightRAG search for: '%s' in project: %s", query, projectId);
 
         try {
@@ -66,8 +66,8 @@ public class SearchService {
             
             // Add source chunks as additional results
             // ONLY include sources with document IDs (entities without document IDs cannot be cited)
-            final int limit = maxResults != null ? Math.min(maxResults, queryResult.sourceChunks().size()) 
-                                                  : queryResult.sourceChunks().size();
+            // The number of chunks is controlled by lightrag.query.chunk.top.k
+            final int limit = queryResult.sourceChunks().size();
             
             // First pass: collect all document UUIDs and valid sources
             final Set<UUID> documentIds = new HashSet<>();

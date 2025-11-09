@@ -157,7 +157,7 @@ public class DocumentResources {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public SearchResponse search(@Valid final SearchRequest request) {
-        return searchService.search(request.query(), request.projectId(), request.maxResults());
+        return searchService.search(request.query(), request.projectId());
     }
 
     @GET

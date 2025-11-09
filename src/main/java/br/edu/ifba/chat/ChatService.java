@@ -43,9 +43,6 @@ public class ChatService {
     @ConfigProperty(name = "chat.system.prompt.no.context")
     String systemPromptNoContext;
 
-    @ConfigProperty(name = "chat.max.results")
-    Integer maxResults;
-
     public ChatResponse chat(final ChatRequest request) {
         final UUID projectId = request.projectId();
         final String userMessage = request.message();
@@ -53,7 +50,7 @@ public class ChatService {
 
         LOG.infof("Processing chat request for project: %s, message: '%s'", projectId, userMessage);
 
-        final SearchResponse searchResponse = searchService.search(userMessage, projectId, maxResults);
+        final SearchResponse searchResponse = searchService.search(userMessage, projectId);
         final List<SearchResult> sources = searchResponse.results();
 
         final String contextPrompt = buildContextPrompt(sources);
