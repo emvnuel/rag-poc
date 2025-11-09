@@ -94,12 +94,26 @@ public class ChatService {
         
         LOG.infof("Received response from LLM: %s", assistantMessage.content());
 
+        // Post-process response: remove invalid citations when no citable sources exist
+        // This handles cases where the LLM invents citations despite instructions not to
+        String processedContent = assistantMessage.content();
+        boolean hasAnyCitableSources = sources.stream()
+            .anyMatch(source -> source.id() != null);
+        
+        if (!hasAnyCitableSources) {
+            // Remove all bracketed citations (e.g., [UUID], [e2cd5fc7-...], [sem-uuid-fornecido], [RAG-contexto-001], [Contexto], etc.)
+            processedContent = processedContent.replaceAll("\\s*\\[([^\\]]+)\\]", "");
+            LOG.infof("Removed invented citations from response (no citable sources available)");
+        }
+
+        final ChatMessage finalAssistantMessage = new ChatMessage(assistantMessage.role(), processedContent);
+        
         final List<ChatMessage> updatedMessages = new ArrayList<>(history);
         updatedMessages.add(new ChatMessage("user", userMessage));
-        updatedMessages.add(assistantMessage);
+        updatedMessages.add(finalAssistantMessage);
 
         return new ChatResponse(
-            assistantMessage.content(),
+            processedContent,
             updatedMessages,
             sources,
             llmResponse.model(),
