@@ -1,7 +1,11 @@
 package br.edu.ifba.document;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import br.edu.ifba.lightrag.LightRAGService;
@@ -19,6 +23,9 @@ public class SearchService {
 
     @Inject
     LightRAGService lightragService;
+
+    @Inject
+    DocumentRepository documentRepository;
 
     @ConfigProperty(name = "lightrag.query.mode", defaultValue = "LOCAL")
     String queryMode;
@@ -62,7 +69,10 @@ public class SearchService {
             final int limit = maxResults != null ? Math.min(maxResults, queryResult.sourceChunks().size()) 
                                                   : queryResult.sourceChunks().size();
             
-            int sourceCount = 0;
+            // First pass: collect all document UUIDs and valid sources
+            final Set<UUID> documentIds = new HashSet<>();
+            final List<LightRAGQueryResult.SourceChunk> validSources = new ArrayList<>();
+            
             for (int i = 0; i < limit && i < queryResult.sourceChunks().size(); i++) {
                 final LightRAGQueryResult.SourceChunk source = queryResult.sourceChunks().get(i);
                 
@@ -74,20 +84,52 @@ public class SearchService {
                 }
                 
                 // Parse document UUID from documentId
-                UUID documentUuid = null;
                 try {
-                    documentUuid = UUID.fromString(source.documentId());
+                    UUID documentUuid = UUID.fromString(source.documentId());
+                    documentIds.add(documentUuid);
+                    validSources.add(source);
                 } catch (IllegalArgumentException e) {
                     LOG.warnf("Could not parse document UUID from: %s, skipping source", source.documentId());
-                    continue;
                 }
+            }
+            
+            // Batch query documents to get filenames
+            final Map<UUID, String> documentFileNames = new HashMap<>();
+            if (!documentIds.isEmpty()) {
+                LOG.debugf("Loading filenames for %d documents", documentIds.size());
+                for (UUID docId : documentIds) {
+                    try {
+                        Document doc = documentRepository.findById(docId);
+                        if (doc != null) {
+                            documentFileNames.put(docId, doc.getFileName());
+                        } else {
+                            LOG.warnf("Document not found for UUID: %s", docId);
+                            documentFileNames.put(docId, "Unknown Document");
+                        }
+                    } catch (Exception e) {
+                        LOG.warnf("Error loading document %s: %s", docId, e.getMessage());
+                        documentFileNames.put(docId, "Unknown Document");
+                    }
+                }
+            }
+            
+            // Second pass: create search results with filenames
+            int sourceCount = 0;
+            for (LightRAGQueryResult.SourceChunk source : validSources) {
+                UUID documentUuid = UUID.fromString(source.documentId());
+                String fileName = documentFileNames.getOrDefault(documentUuid, "Unknown Document");
+                
+                // Format source with filename and chunk index
+                String sourceDescription = source.chunkIndex() > 0 
+                    ? String.format("%s - chunk %d", fileName, source.chunkIndex())
+                    : fileName;
                 
                 sourceCount++;
                 results.add(new SearchResult(
                         documentUuid,                                    // Document UUID
                         source.content(),                                // Chunk content
                         source.chunkIndex(),                             // Chunk index
-                        String.format("Source - %s", source.type()),     // Source type (removed citation number)
+                        sourceDescription,                               // Source with filename and chunk
                         source.relevanceScore()                          // Relevance score (distance)
                 ));
             }

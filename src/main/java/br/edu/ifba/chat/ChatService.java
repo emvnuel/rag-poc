@@ -138,11 +138,12 @@ public class ChatService {
         context.append("\n\n");
         
         // Add citation instruction - ONLY when citable sources exist
-        context.append("IMPORTANTE: Ao responder, você DEVE citar as fontes usando o UUID do documento entre colchetes. ");
-        context.append("Exemplo: [a1b2c3d4-5678-9abc-def0-123456789abc]. ");
-        context.append("NUNCA invente UUIDs. Use APENAS os UUIDs exatos fornecidos abaixo nas fontes disponíveis. ");
-        context.append("NÃO copie UUIDs de outras mensagens ou exemplos. ");
-        context.append("Se não houver UUID listado abaixo para uma informação, NÃO cite.\n\n");
+        context.append("IMPORTANTE: Ao responder, você DEVE citar as fontes usando o formato [UUID:chunk-N] entre colchetes. ");
+        context.append("Exemplo: [a1b2c3d4-5678-9abc-def0-123456789abc:chunk-5]. ");
+        context.append("NUNCA invente IDs de citação. Use APENAS os IDs exatos fornecidos entre colchetes nas fontes abaixo. ");
+        context.append("Cada trecho tem seu próprio ID único com número do chunk. ");
+        context.append("NÃO copie IDs de outras mensagens ou exemplos. ");
+        context.append("Se não houver ID listado para uma informação, NÃO cite.\n\n");
         context.append(String.format("Fontes disponíveis (%d documento(s)):\n\n", citableSources));
 
         // Format sources with UUID citations
@@ -151,16 +152,25 @@ public class ChatService {
         for (int i = 0; i < sources.size(); i++) {
             final SearchResult source = sources.get(i);
             
-            // First source is usually the LightRAG answer (skip adding it as a source reference)
+            // First source is usually the LightRAG synthesized answer - include it as helpful context
             if (i == 0 && source.id() == null && "LightRAG Answer".equals(source.source())) {
-                // Skip the synthesized answer in the context - it will be in the response
+                context.append("=== RESPOSTA SINTETIZADA (use como referência) ===\n");
+                context.append(source.chunkText());
+                context.append("\n\n=== DOCUMENTOS ORIGINAIS ===\n\n");
                 continue;
             }
             
-            // Add source with UUID citation
+            // Add source with UUID:chunk citation
             // All sources here should have document IDs due to filtering in SearchService
             if (source.id() != null) {
-                context.append(String.format("[%s] ", source.id()));
+                // Format citation ID with chunk number for unique identification
+                if (source.chunkIndex() != null) {
+                    context.append(String.format("[%s:chunk-%d] ", source.id(), source.chunkIndex()));
+                } else {
+                    // Fallback for sources without chunk index
+                    context.append(String.format("[%s] ", source.id()));
+                }
+                
                 context.append(String.format("(Documento: %s", source.id()));
                 if (source.chunkIndex() != null) {
                     context.append(String.format(", Trecho %d", source.chunkIndex()));
