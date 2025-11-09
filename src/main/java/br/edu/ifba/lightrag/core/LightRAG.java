@@ -812,17 +812,11 @@ public class LightRAG {
             uniqueEntities.putIfAbsent(entity.getEntityName(), entity);
         }
         
-        // Store entities in graph
-        List<CompletableFuture<Void>> entityFutures = new ArrayList<>();
-        for (Entity entity : uniqueEntities.values()) {
-            entityFutures.add(graphStorage.upsertEntity(entity));
-        }
+        // Store entities in graph using batch operation (reduces connection pool usage)
+        CompletableFuture<Void> entitiesFuture = graphStorage.upsertEntities(new ArrayList<>(uniqueEntities.values()));
         
-        // Store relations in graph
-        List<CompletableFuture<Void>> relationFutures = new ArrayList<>();
-        for (Relation relation : relations) {
-            relationFutures.add(graphStorage.upsertRelation(relation));
-        }
+        // Store relations in graph using batch operation (reduces connection pool usage)
+        CompletableFuture<Void> relationsFuture = graphStorage.upsertRelations(relations);
         
         // Generate and store entity embeddings
         List<String> entityTexts = uniqueEntities.values().stream()
@@ -861,8 +855,8 @@ public class LightRAG {
         
         // Wait for all storage operations to complete
         return CompletableFuture.allOf(
-            CompletableFuture.allOf(entityFutures.toArray(new CompletableFuture[0])),
-            CompletableFuture.allOf(relationFutures.toArray(new CompletableFuture[0])),
+            entitiesFuture,
+            relationsFuture,
             embeddingsFuture
         );
     }

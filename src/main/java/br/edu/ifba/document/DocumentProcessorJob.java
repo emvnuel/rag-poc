@@ -83,17 +83,26 @@ public class DocumentProcessorJob {
             LOG.infof("Processing document %s through LightRAG - fileName: %s, projectId: %s", 
                     documentId, document.getFileName(), document.getProject().getId());
             
-            // Insert document into LightRAG knowledge graph
+            // Insert document into LightRAG knowledge graph asynchronously
             // This will handle chunking, entity extraction, and graph construction
+            // We don't wait for completion here to avoid blocking the worker thread
             lightragService.insertDocument(
                     documentId, 
                     document.getContent(), 
                     document.getFileName(), 
                     document.getProject().getId()
-            ).join();
-            
-            // Mark as processed
-            markAsProcessed(documentId);
+            ).thenAccept(result -> {
+                LOG.infof("Successfully processed document %s through LightRAG", documentId);
+                markAsProcessed(documentId);
+            }).exceptionally(ex -> {
+                LOG.errorf(ex, "Error processing document %s through LightRAG", documentId);
+                try {
+                    markAsFailed(documentId);
+                } catch (Exception e) {
+                    LOG.errorf(e, "Failed to mark document %s as failed", documentId);
+                }
+                return null;
+            });
             
         } catch (Exception e) {
             LOG.errorf(e, "Error processing document %s through LightRAG", documentId);

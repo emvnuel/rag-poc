@@ -2,6 +2,7 @@ package br.edu.ifba.document;
 
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.rest.client.annotation.ClientHeaderParam;
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;

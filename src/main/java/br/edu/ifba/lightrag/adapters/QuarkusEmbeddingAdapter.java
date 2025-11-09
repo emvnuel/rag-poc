@@ -10,13 +10,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jetbrains.annotations.NotNull;
 import org.jboss.logging.Logger;
-import io.quarkus.vertx.ConsumeEvent;
-import io.smallrye.common.annotation.RunOnVirtualThread;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 
 /**
  * Adapter that bridges the existing Quarkus LlmEmbeddingClient to LightRAG's EmbeddingFunction interface.
@@ -62,10 +59,11 @@ public class QuarkusEmbeddingAdapter implements EmbeddingFunction {
 
             LOG.debugf("Calling embedding API with model: %s", embeddingModel);
 
+            // Call the API - let the REST client handle deserialization
             final EmbeddingResponse response = embeddingClient.embed(request);
 
             if (response.getData() == null || response.getData().isEmpty()) {
-                throw new RuntimeException("Embedding API returned no data");
+                throw new RuntimeException("Embedding API returned no data in response");
             }
 
             // Validate we got the expected number of embeddings
