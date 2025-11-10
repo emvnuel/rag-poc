@@ -56,6 +56,11 @@ public class LightRAG {
     // System prompt for entity extraction
     private final String entityExtractionSystemPrompt;
     
+    // Entity extraction configuration
+    private final String entityTypes;
+    private final String extractionLanguage;
+    private final String entityExtractionUserPrompt;
+    
     // Initialization flag
     private volatile boolean initialized = false;
     
@@ -93,6 +98,9 @@ public class LightRAG {
         private String mixSystemPrompt;
         private String bypassSystemPrompt;
         private String entityExtractionSystemPrompt;
+        private String entityTypes;
+        private String extractionLanguage;
+        private String entityExtractionUserPrompt;
         
         public Builder config(@NotNull LightRAGConfig config) {
             this.config = config;
@@ -174,6 +182,21 @@ public class LightRAG {
             return this;
         }
         
+        public Builder entityTypes(@NotNull String entityTypes) {
+            this.entityTypes = entityTypes;
+            return this;
+        }
+        
+        public Builder extractionLanguage(@NotNull String extractionLanguage) {
+            this.extractionLanguage = extractionLanguage;
+            return this;
+        }
+        
+        public Builder entityExtractionUserPrompt(@NotNull String entityExtractionUserPrompt) {
+            this.entityExtractionUserPrompt = entityExtractionUserPrompt;
+            return this;
+        }
+        
         public LightRAG build() {
             if (llmFunction == null) {
                 throw new IllegalStateException("llmFunction is required");
@@ -220,6 +243,15 @@ public class LightRAG {
             if (entityExtractionSystemPrompt == null) {
                 throw new IllegalStateException("entityExtractionSystemPrompt is required");
             }
+            if (entityTypes == null) {
+                throw new IllegalStateException("entityTypes is required");
+            }
+            if (extractionLanguage == null) {
+                throw new IllegalStateException("extractionLanguage is required");
+            }
+            if (entityExtractionUserPrompt == null) {
+                throw new IllegalStateException("entityExtractionUserPrompt is required");
+            }
             
             return new LightRAG(
                 config,
@@ -237,7 +269,10 @@ public class LightRAG {
                 naiveSystemPrompt,
                 mixSystemPrompt,
                 bypassSystemPrompt,
-                entityExtractionSystemPrompt
+                entityExtractionSystemPrompt,
+                entityTypes,
+                extractionLanguage,
+                entityExtractionUserPrompt
             );
         }
     }
@@ -261,7 +296,10 @@ public class LightRAG {
         @NotNull String naiveSystemPrompt,
         @NotNull String mixSystemPrompt,
         @NotNull String bypassSystemPrompt,
-        @NotNull String entityExtractionSystemPrompt
+        @NotNull String entityExtractionSystemPrompt,
+        @NotNull String entityTypes,
+        @NotNull String extractionLanguage,
+        @NotNull String entityExtractionUserPrompt
     ) {
         this.config = config;
         this.llmFunction = llmFunction;
@@ -279,6 +317,9 @@ public class LightRAG {
         this.mixSystemPrompt = mixSystemPrompt;
         this.bypassSystemPrompt = bypassSystemPrompt;
         this.entityExtractionSystemPrompt = entityExtractionSystemPrompt;
+        this.entityTypes = entityTypes;
+        this.extractionLanguage = extractionLanguage;
+        this.entityExtractionUserPrompt = entityExtractionUserPrompt;
     }
     
     /**
@@ -616,37 +657,51 @@ public class LightRAG {
                 
                 // Wait for this batch to complete before moving to next batch
                 return CompletableFuture.allOf(batchFutures.toArray(new CompletableFuture[0]))
-                    .thenApply(ignored -> {
-                        // Collect results from this batch
-                        int batchEntities = 0;
-                        int batchRelations = 0;
+                    .thenCompose(ignored -> {
+                        // Collect results from THIS batch only (not accumulating in memory)
+                        List<Entity> batchEntities = new ArrayList<>();
+                        List<Relation> batchRelations = new ArrayList<>();
                         
                         for (CompletableFuture<KGExtractionChunkResult> future : batchFutures) {
                             KGExtractionChunkResult result = future.join();
-                            synchronized (allEntities) {
-                                allEntities.addAll(result.entities);
-                                allRelations.addAll(result.relations);
-                                batchEntities += result.entities.size();
-                                batchRelations += result.relations.size();
-                            }
+                            batchEntities.addAll(result.entities);
+                            batchRelations.addAll(result.relations);
                         }
                         
-                        logger.info("KG batch {}/{} completed - entities: {}, relations: {} (total: {} entities, {} relations)", 
-                                   batchIndex, totalBatches, batchEntities, batchRelations,
-                                   allEntities.size(), allRelations.size());
+                        logger.info("KG batch {}/{} extracted - entities: {}, relations: {}", 
+                                   batchIndex, totalBatches, batchEntities.size(), batchRelations.size());
                         
-                        return null;
+                        // STORE THIS BATCH IMMEDIATELY (store-as-you-go strategy)
+                        // Benefits: constant memory, crash resilience, progressive persistence
+                        return storeKnowledgeGraph(batchEntities, batchRelations, metadata)
+                            .thenApply(stored -> {
+                                // Track cumulative totals for final result (minimal memory - just counts)
+                                synchronized (allEntities) {
+                                    allEntities.addAll(batchEntities);
+                                    allRelations.addAll(batchRelations);
+                                }
+                                
+                                logger.info("KG batch {}/{} stored successfully - cumulative total: {} entities, {} relations",
+                                           batchIndex, totalBatches, allEntities.size(), allRelations.size());
+                                
+                                return (Void) null;
+                            })
+                            .exceptionally(ex -> {
+                                logger.error("Failed to store KG batch {}/{}: {}", 
+                                           batchIndex, totalBatches, ex.getMessage(), ex);
+                                throw new RuntimeException("KG batch storage failed", ex);
+                            });
                     });
             });
         }
         
-        // After all batches complete, store the knowledge graph
-        return chain.thenCompose(v -> {
-            logger.info("All KG extraction batches completed - total entities: {}, relations: {}", 
+        // After all batches complete, return the cumulative result
+        // Note: Storage happens per-batch (store-as-you-go), so no final storage needed
+        return chain.thenApply(v -> {
+            logger.info("All KG extraction and storage completed - total entities: {}, relations: {}", 
                        allEntities.size(), allRelations.size());
             
-            return storeKnowledgeGraph(allEntities, allRelations, metadata)
-                .thenApply(ignored -> new KGExtractionResult(allEntities.size(), allRelations.size()));
+            return new KGExtractionResult(allEntities.size(), allRelations.size());
         });
     }
     
@@ -662,11 +717,14 @@ public class LightRAG {
         @NotNull String chunkId,
         @NotNull String chunkContent
     ) {
-        // Build extraction prompt
-        String prompt = buildKGExtractionPrompt(chunkContent);
+        // Fill placeholders in the system prompt template
+        String filledSystemPrompt = fillEntityExtractionPromptTemplate(chunkContent);
+        
+        // Use configured user prompt from .env
+        String userPrompt = entityExtractionUserPrompt;
         
         // Call LLM to extract entities and relations
-        return llmFunction.apply(prompt, entityExtractionSystemPrompt)
+        return llmFunction.apply(userPrompt, filledSystemPrompt)
             .thenApply(response -> parseKGExtractionResponse(chunkId, response))
             .exceptionally(e -> {
                 logger.warn("Failed to extract KG from chunk {}: {}", chunkId, e.getMessage());
@@ -675,198 +733,194 @@ public class LightRAG {
     }
     
     /**
-     * Builds a prompt for entity/relation extraction.
+     * Fills template placeholders in the entity extraction system prompt.
+     * Replaces {input_text}, {entity_types}, and {language} with actual values from .env configuration.
      */
-    private String buildKGExtractionPrompt(@NotNull String text) {
-        return String.format(
-            """
-            Extract all entities and relationships from the following text.
-            Focus on identifying key concepts, people, organizations, locations, and their relationships.
-            
-            Text:
-            %s
-            
-            Return the extracted entities and relationships in the JSON format specified in the system prompt.
-            """,
-            text
-        );
+    private String fillEntityExtractionPromptTemplate(@NotNull String inputText) {
+        // Replace placeholders with values from .env configuration
+        return entityExtractionSystemPrompt
+            .replace("{input_text}", inputText)
+            .replace("{entity_types}", entityTypes)
+            .replace("{language}", extractionLanguage);
     }
     
     /**
      * Parses LLM response into entities and relations.
-     * Expects JSON format: {"entities": [...], "relationships": [...]}
+     * Expects LightRAG tuple-delimiter format:
+     * - entity{tuple_delimiter}entity_name{tuple_delimiter}entity_type{tuple_delimiter}entity_description
+     * - relation{tuple_delimiter}src_id{tuple_delimiter}tgt_id{tuple_delimiter}relationship_keywords{tuple_delimiter}relationship_description
      */
     private KGExtractionChunkResult parseKGExtractionResponse(
         @NotNull String chunkId,
         @NotNull String response
     ) {
         try {
-            // Simple JSON parsing (in production, use Jackson or similar)
             List<Entity> entities = new ArrayList<>();
             List<Relation> relations = new ArrayList<>();
             
-            // Find entities array
-            int entitiesStart = response.indexOf("\"entities\"");
-            if (entitiesStart >= 0) {
-                int arrayStart = response.indexOf("[", entitiesStart);
-                int arrayEnd = findMatchingBracket(response, arrayStart, '[', ']');
+            // Parse line-by-line for tuple-delimiter format
+            String[] lines = response.split("\n");
+            
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
                 
-                if (arrayStart >= 0 && arrayEnd > arrayStart) {
-                    String entitiesJson = response.substring(arrayStart + 1, arrayEnd);
-                    entities = parseEntities(entitiesJson, chunkId);
+                // Parse entity lines: entity{tuple_delimiter}name{tuple_delimiter}type{tuple_delimiter}description
+                if (line.startsWith("entity{tuple_delimiter}")) {
+                    Entity entity = parseEntityLine(line, chunkId);
+                    if (entity != null) {
+                        entities.add(entity);
+                    }
+                }
+                // Parse relation lines: relation{tuple_delimiter}src{tuple_delimiter}tgt{tuple_delimiter}keywords{tuple_delimiter}description
+                else if (line.startsWith("relation{tuple_delimiter}")) {
+                    Relation relation = parseRelationLine(line, chunkId);
+                    if (relation != null) {
+                        relations.add(relation);
+                    }
+                }
+                // Stop at completion delimiter
+                else if (line.contains("{completion_delimiter}")) {
+                    break;
                 }
             }
             
-            // Find relationships array
-            int relsStart = response.indexOf("\"relationships\"");
-            if (relsStart < 0) {
-                relsStart = response.indexOf("\"relations\"");
-            }
-            
-            if (relsStart >= 0) {
-                int arrayStart = response.indexOf("[", relsStart);
-                int arrayEnd = findMatchingBracket(response, arrayStart, '[', ']');
-                
-                if (arrayStart >= 0 && arrayEnd > arrayStart) {
-                    String relationsJson = response.substring(arrayStart + 1, arrayEnd);
-                    relations = parseRelations(relationsJson, chunkId, entities);
-                }
-            }
+            logger.debug("Parsed {} entities and {} relations from chunk {}", 
+                        entities.size(), relations.size(), chunkId);
             
             return new KGExtractionChunkResult(entities, relations);
             
         } catch (Exception e) {
-            logger.warn("Failed to parse KG extraction response: {}", e.getMessage());
+            logger.warn("Failed to parse KG extraction response for chunk {}: {}", chunkId, e.getMessage());
             return new KGExtractionChunkResult(List.of(), List.of());
         }
     }
     
     /**
-     * Finds the matching closing bracket for an opening bracket.
+     * Parses a single entity line in tuple-delimiter format.
+     * Format: entity{tuple_delimiter}entity_name{tuple_delimiter}entity_type{tuple_delimiter}entity_description
      */
-    private int findMatchingBracket(String text, int start, char open, char close) {
-        if (start < 0 || start >= text.length() || text.charAt(start) != open) {
-            return -1;
-        }
-        
-        int depth = 1;
-        for (int i = start + 1; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == open) depth++;
-            else if (c == close) {
-                depth--;
-                if (depth == 0) return i;
+    private Entity parseEntityLine(@NotNull String line, @NotNull String sourceChunkId) {
+        try {
+            // Split by {tuple_delimiter}
+            String[] parts = line.split("\\{tuple_delimiter\\}");
+            
+            if (parts.length < 4) {
+                logger.debug("Invalid entity line format (expected 4 parts, got {}): {}", parts.length, line);
+                return null;
             }
+            
+            // parts[0] = "entity" (already validated by caller)
+            String entityName = parts[1].trim();
+            String entityType = parts[2].trim();
+            String description = parts.length > 3 ? parts[3].trim() : "";
+            
+            if (entityName.isEmpty()) {
+                return null;
+            }
+            
+            return Entity.builder()
+                .entityName(entityName)
+                .entityType(entityType.isEmpty() ? "CONCEPT" : entityType)
+                .description(description)
+                .sourceId(sourceChunkId)
+                .build();
+                
+        } catch (Exception e) {
+            logger.debug("Failed to parse entity line: {}", e.getMessage());
+            return null;
         }
-        return -1;
     }
     
     /**
-     * Parses entities from JSON array string.
+     * Parses a single relation line in tuple-delimiter format.
+     * Format: relation{tuple_delimiter}src_id{tuple_delimiter}tgt_id{tuple_delimiter}relationship_keywords{tuple_delimiter}relationship_description
      */
-    private List<Entity> parseEntities(@NotNull String entitiesJson, @NotNull String sourceChunkId) {
-        List<Entity> entities = new ArrayList<>();
-        
-        // Split by object boundaries
-        String[] entityObjects = entitiesJson.split("\\},\\s*\\{");
-        
-        for (String entityObj : entityObjects) {
-            try {
-                String cleaned = entityObj.replace("{", "").replace("}", "").trim();
-                if (cleaned.isEmpty()) continue;
-                
-                String entityName = extractJsonField(cleaned, "entity_name");
-                String entityType = extractJsonField(cleaned, "entity_type");
-                String description = extractJsonField(cleaned, "description");
-                
-                if (entityName != null && !entityName.isEmpty()) {
-                    Entity entity = Entity.builder()
-                        .entityName(entityName)
-                        .entityType(entityType != null ? entityType : "CONCEPT")
-                        .description(description != null ? description : "")
-                        .sourceId(sourceChunkId)
-                        .build();
-                    
-                    entities.add(entity);
-                }
-            } catch (Exception e) {
-                logger.debug("Failed to parse entity object: {}", e.getMessage());
+    private Relation parseRelationLine(@NotNull String line, @NotNull String sourceChunkId) {
+        try {
+            // Split by {tuple_delimiter}
+            String[] parts = line.split("\\{tuple_delimiter\\}");
+            
+            if (parts.length < 5) {
+                logger.debug("Invalid relation line format (expected 5 parts, got {}): {}", parts.length, line);
+                return null;
             }
+            
+            // parts[0] = "relation" (already validated by caller)
+            String srcId = parts[1].trim();
+            String tgtId = parts[2].trim();
+            String keywords = parts[3].trim();
+            String description = parts.length > 4 ? parts[4].trim() : "";
+            
+            if (srcId.isEmpty() || tgtId.isEmpty()) {
+                return null;
+            }
+            
+            return Relation.builder()
+                .srcId(srcId)
+                .tgtId(tgtId)
+                .description(description.isEmpty() ? "RELATED_TO" : description)
+                .keywords(keywords)
+                .sourceId(sourceChunkId)
+                .weight(1.0)
+                .build();
+                
+        } catch (Exception e) {
+            logger.debug("Failed to parse relation line: {}", e.getMessage());
+            return null;
         }
-        
-        return entities;
     }
     
     /**
-     * Parses relations from JSON array string.
+     * Merges two entity descriptions by concatenating them with a separator.
+     * Implements simple description accumulation strategy (Option B from analysis).
+     * 
+     * @param existingDesc the existing accumulated description
+     * @param newDesc the new description to merge in
+     * @return merged description with separator, limited to max length
      */
-    private List<Relation> parseRelations(
-        @NotNull String relationsJson,
-        @NotNull String sourceChunkId,
-        @NotNull List<Entity> entities
-    ) {
-        List<Relation> relations = new ArrayList<>();
-        
-        // Build entity name set for validation
-        Map<String, String> entityNameMap = new HashMap<>();
-        for (Entity entity : entities) {
-            entityNameMap.put(entity.getEntityName().toLowerCase(), entity.getEntityName());
+    private String mergeDescriptions(@NotNull String existingDesc, @NotNull String newDesc) {
+        // Skip if new description is identical to existing
+        if (existingDesc.equals(newDesc)) {
+            return existingDesc;
         }
         
-        // Split by object boundaries
-        String[] relationObjects = relationsJson.split("\\},\\s*\\{");
-        
-        for (String relationObj : relationObjects) {
-            try {
-                String cleaned = relationObj.replace("{", "").replace("}", "").trim();
-                if (cleaned.isEmpty()) continue;
-                
-                String srcId = extractJsonField(cleaned, "src_id");
-                String tgtId = extractJsonField(cleaned, "tgt_id");
-                String description = extractJsonField(cleaned, "description");
-                String keywords = extractJsonField(cleaned, "keywords");
-                
-                // Try to resolve entity names (srcId and tgtId are entity names in the extraction)
-                if (srcId != null && tgtId != null) {
-                    // Use the actual entity names from entities, or the extracted names if not found
-                    String srcEntityName = entityNameMap.getOrDefault(srcId.toLowerCase(), srcId);
-                    String tgtEntityName = entityNameMap.getOrDefault(tgtId.toLowerCase(), tgtId);
-                    
-                    Relation relation = Relation.builder()
-                        .srcId(srcEntityName)
-                        .tgtId(tgtEntityName)
-                        .description(description != null ? description : "RELATED_TO")
-                        .keywords(keywords != null ? keywords : "")
-                        .sourceId(sourceChunkId)
-                        .weight(1.0)
-                        .build();
-                    
-                    relations.add(relation);
-                }
-            } catch (Exception e) {
-                logger.debug("Failed to parse relation object: {}", e.getMessage());
-            }
+        // Skip if new description is already contained in existing
+        if (existingDesc.contains(newDesc)) {
+            return existingDesc;
         }
         
-        return relations;
-    }
-    
-    /**
-     * Extracts a field value from a simple JSON-like string.
-     */
-    private String extractJsonField(@NotNull String json, @NotNull String fieldName) {
-        String pattern = "\"" + fieldName + "\"\\s*:\\s*\"([^\"]+)\"";
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
-        java.util.regex.Matcher m = p.matcher(json);
+        // Concatenate with separator from config
+        String merged = existingDesc + config.entityDescriptionSeparator() + newDesc;
         
-        if (m.find()) {
-            return m.group(1);
+        // Truncate if exceeds max length from config
+        if (merged.length() > config.entityDescriptionMaxLength()) {
+            merged = merged.substring(0, config.entityDescriptionMaxLength() - 3) + "...";
         }
-        return null;
+        
+        return merged;
     }
     
     /**
      * Stores entities and relations in graph storage and generates entity embeddings.
+     * 
+     * <p>Implementation Note - Entity Description Accumulation:</p>
+     * <p>This method implements description merging for duplicate entities within the SAME batch
+     * of entities being processed (from the same document chunks). Multiple descriptions for the
+     * same entity are concatenated with a configurable separator.</p>
+     * 
+     * <p>Limitation - Apache AGE v1.5.0:</p>
+     * <p>Due to a bug in Apache AGE v1.5.0, entity properties are NOT updated when the entity
+     * already exists in the graph database (see AgeGraphStorage.java:71-73, 103-108).
+     * This means:</p>
+     * <ul>
+     *   <li>Description merging works for entities within the SAME document/batch</li>
+     *   <li>Description merging does NOT work across DIFFERENT documents processed at different times</li>
+     *   <li>After upgrading to AGE v1.5.1+, proper upsert logic should be implemented</li>
+     * </ul>
+     * 
+     * <p>For full LightRAG description summarization (using LLM to merge descriptions across
+     * multiple documents), see the official LightRAG prompt.py:summarize_entity_descriptions.</p>
      */
     private CompletableFuture<Void> storeKnowledgeGraph(
         @NotNull List<Entity> entities,
@@ -877,17 +931,32 @@ public class LightRAG {
             return CompletableFuture.completedFuture(null);
         }
         
-        // Deduplicate entities by name
+        // Deduplicate entities by name and accumulate descriptions
         Map<String, Entity> uniqueEntities = new HashMap<>();
         for (Entity entity : entities) {
-            uniqueEntities.putIfAbsent(entity.getEntityName(), entity);
+            String entityName = entity.getEntityName();
+            if (uniqueEntities.containsKey(entityName)) {
+                // Entity already exists in this batch - merge descriptions
+                Entity existing = uniqueEntities.get(entityName);
+                String mergedDescription = mergeDescriptions(
+                    existing.getDescription(), 
+                    entity.getDescription()
+                );
+                uniqueEntities.put(entityName, existing.withDescription(mergedDescription));
+            } else {
+                // First occurrence of this entity in this batch
+                uniqueEntities.put(entityName, entity);
+            }
         }
         
         // Store entities in graph using batch operation (reduces connection pool usage)
         CompletableFuture<Void> entitiesFuture = graphStorage.upsertEntities(new ArrayList<>(uniqueEntities.values()));
         
         // Store relations in graph using batch operation (reduces connection pool usage)
-        CompletableFuture<Void> relationsFuture = graphStorage.upsertRelations(relations);
+        // IMPORTANT: Relations must wait for entities to complete first to avoid race conditions
+        // where relation MERGE creates name-only entities before entity upsert completes
+        CompletableFuture<Void> relationsFuture = entitiesFuture
+            .thenCompose(v -> graphStorage.upsertRelations(relations));
         
         // Generate and store entity embeddings
         List<String> entityTexts = uniqueEntities.values().stream()
@@ -912,8 +981,14 @@ public class LightRAG {
                                 null,  // chunkIndex (entities are not tied to specific chunks)
                                 projectId  // projectId (UUID from the project table)
                             );
+                            
+                            // Generate deterministic UUID for entity vector (same entity = same ID)
+                            // This ensures cross-batch deduplication: if entity appears in multiple batches,
+                            // PgVector's ON CONFLICT will update the existing vector instead of creating duplicates
+                            String deterministicId = generateEntityVectorId(entity.getEntityName(), projectId);
+                            
                             vectorEntries.add(new VectorStorage.VectorEntry(
-                                UuidUtils.randomV7().toString(),  // Generate UUID for vector ID
+                                deterministicId,
                                 embeddings.get(i),
                                 vectorMetadata
                             ));
@@ -965,6 +1040,21 @@ public class LightRAG {
             ));
     }
     
+    /**
+     * Generates a deterministic UUID for entity vectors based on entity name and project ID.
+     * This ensures that the same entity across different batches gets the same vector ID,
+     * enabling PgVector's ON CONFLICT DO UPDATE to deduplicate instead of creating duplicates.
+     * 
+     * @param entityName The entity name
+     * @param projectId The project ID (nullable)
+     * @return Deterministic UUID string
+     */
+    private String generateEntityVectorId(@NotNull String entityName, @Nullable String projectId) {
+        // Create composite key: projectId:entityName
+        String composite = (projectId != null ? projectId : "global") + ":" + entityName;
+        return UuidUtils.deterministicV5(composite).toString();
+    }
+    
     private void ensureInitialized() {
         if (!initialized) {
             throw new IllegalStateException(
@@ -983,7 +1073,9 @@ public class LightRAG {
         int topK,
         boolean enableCache,
         int kgExtractionBatchSize,
-        int embeddingBatchSize
+        int embeddingBatchSize,
+        int entityDescriptionMaxLength,
+        String entityDescriptionSeparator
     ) {
         public static LightRAGConfig defaults() {
             return new LightRAGConfig(
@@ -993,7 +1085,9 @@ public class LightRAG {
                 10,    // topK
                 true,  // enableCache
                 20,    // kgExtractionBatchSize
-                32     // embeddingBatchSize
+                32,    // embeddingBatchSize
+                1000,  // entityDescriptionMaxLength
+                " | "  // entityDescriptionSeparator
             );
         }
     }

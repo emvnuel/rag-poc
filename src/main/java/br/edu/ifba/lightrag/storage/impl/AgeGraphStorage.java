@@ -65,21 +65,22 @@ public class AgeGraphStorage implements GraphStorage {
             try (Connection conn = config.getConnection()) {
                 conn.setAutoCommit(false);
                 
-                // WORKAROUND for Apache AGE v1.5.0 bug:
-                // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
-                // Solution: Put all properties directly in MERGE clause
-                // NOTE: This means properties won't be updated on existing entities,
-                // only set on new entities. Acceptable for current use case.
-                // TODO: After upgrading to AGE v1.5.1+, can use proper upsert logic
+                // FIX: MERGE only on 'name' to avoid duplicates across different source_ids
+                // Since AGE doesn't support ON CREATE SET, we use MERGE on name only
+                // Properties may get updated but entity deduplication is preserved
+                // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                 
+                String normalizedName = normalizeEntityName(entity.getEntityName());
                 String mergeCypher = String.format(
-                    "MERGE (e:Entity {name: '%s', entity_type: '%s', description: '%s', source_id: '%s'}) " +
+                    "MERGE (e:Entity {name: '%s'}) " +
+                    "SET e.entity_type = '%s', e.description = '%s' " +
                     "RETURN e",
-                    escapeCypher(entity.getEntityName()),
+                    escapeCypher(normalizedName),
                     escapeCypher(entity.getEntityType()),
-                    escapeCypher(entity.getDescription()),
-                    escapeCypher(entity.getSourceId())
+                    escapeCypher(entity.getDescription())
                 );
+                logger.debug("Executing MERGE for entity '{}' (original: '{}'): {}", 
+                    normalizedName, entity.getEntityName(), mergeCypher);
                 executeCypherWithConnection(conn, mergeCypher);
                 
                 conn.commit();
@@ -100,22 +101,23 @@ public class AgeGraphStorage implements GraphStorage {
             try (Connection conn = config.getConnection()) {
                 conn.setAutoCommit(false);
                 
-                // WORKAROUND for Apache AGE v1.5.0 bug:
-                // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
-                // Solution: Put all properties directly in MERGE clause
-                // NOTE: This means properties won't be updated on existing entities,
-                // only set on new entities. Acceptable for current use case.
-                // TODO: After upgrading to AGE v1.5.1+, can use proper upsert logic
+                // FIX: MERGE only on 'name' to avoid duplicates across different source_ids
+                // Since AGE doesn't support ON CREATE SET, we use MERGE on name only
+                // Properties may get updated but entity deduplication is preserved
+                // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                 
                 for (Entity entity : entities) {
+                    String normalizedName = normalizeEntityName(entity.getEntityName());
                     String mergeCypher = String.format(
-                        "MERGE (e:Entity {name: '%s', entity_type: '%s', description: '%s', source_id: '%s'}) " +
+                        "MERGE (e:Entity {name: '%s'}) " +
+                        "SET e.entity_type = '%s', e.description = '%s' " +
                         "RETURN e",
-                        escapeCypher(entity.getEntityName()),
+                        escapeCypher(normalizedName),
                         escapeCypher(entity.getEntityType()),
-                        escapeCypher(entity.getDescription()),
-                        escapeCypher(entity.getSourceId())
+                        escapeCypher(entity.getDescription())
                     );
+                    logger.debug("Executing batch MERGE for entity '{}' (original: '{}'): {}", 
+                        normalizedName, entity.getEntityName(), mergeCypher);
                     executeCypherWithConnection(conn, mergeCypher);
                 }
                 
@@ -136,24 +138,23 @@ public class AgeGraphStorage implements GraphStorage {
                 conn.setAutoCommit(false);
                 
                 try {
-                    // WORKAROUND for Apache AGE v1.5.0 bug:
-                    // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
-                    // Solution: Use MERGE with all properties directly (no update on existing)
-                    // NOTE: Properties won't update on existing relations, only set on creation
-                    // TODO: Remove this workaround after upgrading to AGE v1.5.1+ or v1.6.0+
+                    // FIX: MERGE only on entity names and relation direction, not on properties
+                    // Properties may get updated but relation deduplication is preserved
+                    // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                     
-                    // Use MERGE with all properties in the match pattern and property map
+                    String normalizedSrc = normalizeEntityName(relation.getSrcId());
+                    String normalizedTgt = normalizeEntityName(relation.getTgtId());
                     String mergeCypher = String.format(Locale.US,
                         "MERGE (src:Entity {name: '%s'}) " +
                         "MERGE (tgt:Entity {name: '%s'}) " +
-                        "MERGE (src)-[r:RELATED_TO {description: '%s', keywords: '%s', weight: %f, source_id: '%s'}]->(tgt) " +
+                        "MERGE (src)-[r:RELATED_TO]->(tgt) " +
+                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f " +
                         "RETURN r",
-                        escapeCypher(relation.getSrcId()),
-                        escapeCypher(relation.getTgtId()),
+                        escapeCypher(normalizedSrc),
+                        escapeCypher(normalizedTgt),
                         escapeCypher(relation.getDescription()),
                         escapeCypher(relation.getKeywords()),
-                        relation.getWeight(),
-                        escapeCypher(relation.getSourceId())
+                        relation.getWeight()
                     );
                     executeCypherWithConnection(conn, mergeCypher);
                     
@@ -181,25 +182,24 @@ public class AgeGraphStorage implements GraphStorage {
                 conn.setAutoCommit(false);
                 
                 try {
-                    // WORKAROUND for Apache AGE v1.5.0 bug:
-                    // MATCH...SET fails after MERGE with "Entity failed to be updated: 3" error
-                    // Solution: Use MERGE with all properties directly (no update on existing)
-                    // NOTE: Properties won't update on existing relations, only set on creation
-                    // TODO: Remove this workaround after upgrading to AGE v1.5.1+ or v1.6.0+
+                    // FIX: MERGE only on entity names and relation direction, not on properties
+                    // Properties may get updated but relation deduplication is preserved
+                    // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                     
                     for (Relation relation : relations) {
-                        // Use MERGE with all properties in the match pattern and property map
+                        String normalizedSrc = normalizeEntityName(relation.getSrcId());
+                        String normalizedTgt = normalizeEntityName(relation.getTgtId());
                         String mergeCypher = String.format(Locale.US,
                             "MERGE (src:Entity {name: '%s'}) " +
                             "MERGE (tgt:Entity {name: '%s'}) " +
-                            "MERGE (src)-[r:RELATED_TO {description: '%s', keywords: '%s', weight: %f, source_id: '%s'}]->(tgt) " +
+                            "MERGE (src)-[r:RELATED_TO]->(tgt) " +
+                            "SET r.description = '%s', r.keywords = '%s', r.weight = %f " +
                             "RETURN r",
-                            escapeCypher(relation.getSrcId()),
-                            escapeCypher(relation.getTgtId()),
+                            escapeCypher(normalizedSrc),
+                            escapeCypher(normalizedTgt),
                             escapeCypher(relation.getDescription()),
                             escapeCypher(relation.getKeywords()),
-                            relation.getWeight(),
-                            escapeCypher(relation.getSourceId())
+                            relation.getWeight()
                         );
                         executeCypherWithConnection(conn, mergeCypher);
                     }
@@ -221,9 +221,10 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<Entity> getEntity(@NotNull String entityName) {
         return CompletableFuture.supplyAsync(() -> {
+            String normalizedName = normalizeEntityName(entityName);
             String cypher = String.format(
                 "MATCH (e:Entity {name: '%s'}) RETURN e",
-                escapeCypher(entityName)
+                escapeCypher(normalizedName)
             );
             
             List<Entity> results = queryCypherForEntities(cypher);
@@ -239,7 +240,7 @@ public class AgeGraphStorage implements GraphStorage {
         
         return CompletableFuture.supplyAsync(() -> {
             String namesClause = entityNames.stream()
-                .map(name -> "'" + escapeCypher(name) + "'")
+                .map(name -> "'" + escapeCypher(normalizeEntityName(name)) + "'")
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("");
             
@@ -255,11 +256,13 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<Relation> getRelation(@NotNull String srcId, @NotNull String tgtId) {
         return CompletableFuture.supplyAsync(() -> {
+            String normalizedSrc = normalizeEntityName(srcId);
+            String normalizedTgt = normalizeEntityName(tgtId);
             String cypher = String.format(
                 "MATCH (src:Entity {name: '%s'})-[r:RELATED_TO]->(tgt:Entity {name: '%s'}) " +
                 "RETURN src.name, tgt.name, r",
-                escapeCypher(srcId),
-                escapeCypher(tgtId)
+                escapeCypher(normalizedSrc),
+                escapeCypher(normalizedTgt)
             );
             
             List<Relation> results = queryCypherForRelations(cypher);
@@ -270,10 +273,11 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<List<Relation>> getRelationsForEntity(@NotNull String entityName) {
         return CompletableFuture.supplyAsync(() -> {
+            String normalizedName = normalizeEntityName(entityName);
             String cypher = String.format(
                 "MATCH (e:Entity {name: '%s'})-[r:RELATED_TO]-(other:Entity) " +
                 "RETURN e.name, other.name, r",
-                escapeCypher(entityName)
+                escapeCypher(normalizedName)
             );
             
             return queryCypherForRelations(cypher);
@@ -299,9 +303,10 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<Boolean> deleteEntity(@NotNull String entityName) {
         return CompletableFuture.supplyAsync(() -> {
+            String normalizedName = normalizeEntityName(entityName);
             String cypher = String.format(
                 "MATCH (e:Entity {name: '%s'}) DETACH DELETE e",
-                escapeCypher(entityName)
+                escapeCypher(normalizedName)
             );
             
             try {
@@ -317,10 +322,12 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<Boolean> deleteRelation(@NotNull String srcId, @NotNull String tgtId) {
         return CompletableFuture.supplyAsync(() -> {
+            String normalizedSrc = normalizeEntityName(srcId);
+            String normalizedTgt = normalizeEntityName(tgtId);
             String cypher = String.format(
                 "MATCH (src:Entity {name: '%s'})-[r:RELATED_TO]->(tgt:Entity {name: '%s'}) DELETE r",
-                escapeCypher(srcId),
-                escapeCypher(tgtId)
+                escapeCypher(normalizedSrc),
+                escapeCypher(normalizedTgt)
             );
             
             try {
@@ -367,10 +374,12 @@ public class AgeGraphStorage implements GraphStorage {
                 List<Entity> entities = new ArrayList<>();
                 List<Relation> relations = new ArrayList<>();
                 
+                String normalizedStart = normalizeEntityName(startEntity);
+                
                 // Get all entities within maxDepth hops from start entity
                 String entitiesCypher = String.format(
                     "MATCH (start:Entity {name: '%s'})-[*0..%d]-(e:Entity) RETURN DISTINCT e",
-                    escapeCypher(startEntity),
+                    escapeCypher(normalizedStart),
                     maxDepth
                 );
                 entities = queryCypherForEntities(entitiesCypher);
@@ -379,7 +388,7 @@ public class AgeGraphStorage implements GraphStorage {
                 String relationsCypher = String.format(
                     "MATCH (start:Entity {name: '%s'})-[*0..%d]-(e:Entity)-[r:RELATED_TO]-(other:Entity) " +
                     "RETURN DISTINCT e.name, other.name, r",
-                    escapeCypher(startEntity),
+                    escapeCypher(normalizedStart),
                     maxDepth
                 );
                 relations = queryCypherForRelations(relationsCypher);
@@ -396,11 +405,13 @@ public class AgeGraphStorage implements GraphStorage {
     @Override
     public CompletableFuture<List<Entity>> findShortestPath(@NotNull String sourceEntity, @NotNull String targetEntity) {
         return CompletableFuture.supplyAsync(() -> {
+            String normalizedSrc = normalizeEntityName(sourceEntity);
+            String normalizedTgt = normalizeEntityName(targetEntity);
             String cypher = String.format(
                 "MATCH path = shortestPath((src:Entity {name: '%s'})-[*]-(tgt:Entity {name: '%s'})) " +
                 "RETURN nodes(path)",
-                escapeCypher(sourceEntity),
-                escapeCypher(targetEntity)
+                escapeCypher(normalizedSrc),
+                escapeCypher(normalizedTgt)
             );
             
             try {
@@ -703,6 +714,17 @@ public class AgeGraphStorage implements GraphStorage {
     private String cleanAgtypeString(String value) {
         if (value == null) return "";
         return value.replace("\"", "").trim();
+    }
+    
+    /**
+     * Normalizes entity name to lowercase for case-insensitive matching.
+     * This prevents duplicates like "TechCorp" and "Techcorp".
+     */
+    private String normalizeEntityName(String name) {
+        if (name == null) return "";
+        final String normalized = name.toLowerCase().trim();
+        logger.debug("Normalizing entity name: '{}' -> '{}'", name, normalized);
+        return normalized;
     }
     
     /**

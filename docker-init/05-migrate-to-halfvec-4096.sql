@@ -1,5 +1,5 @@
 -- Migration script to upgrade from vector(1024) to halfvec(4000)
--- This script migrates the lightrag_vectors table to support 4000-dimensional embeddings
+-- This script migrates the lightrag_vectors table to support 4000-dimensional vectors
 -- using halfvec type for better performance and storage efficiency
 
 -- Purpose:
@@ -11,10 +11,10 @@
 --   - halfvec uses 2 bytes per dimension vs 4 bytes for vector
 --   - Storage: 4000 dims * 2 bytes = ~8 KB per vector
 --   - HNSW index natively supports halfvec up to 4,000 dimensions (hard limit)
---   - Slightly lower precision than full vector (acceptable for embeddings)
+--   - Slightly lower precision than full vector (acceptable for vector storage)
 
 -- WARNING: This will delete all existing vectors as they cannot be converted
--- The documents will remain, but need to be reprocessed to generate new 4096-dim embeddings
+-- The documents will remain, but need to be reprocessed to generate new vectors
 
 BEGIN;
 
@@ -88,7 +88,7 @@ BEGIN
     RAISE NOTICE '  1. Update LIGHTRAG_VECTOR_DIMENSION=4000 in .env';
     RAISE NOTICE '  2. Update EMBEDDING_MODEL to support 4000 dims';
     RAISE NOTICE '  3. Restart application to apply new config';
-    RAISE NOTICE '  4. Reprocess documents to generate new embeddings';
+    RAISE NOTICE '  4. Reprocess documents to generate new vectors';
     RAISE NOTICE '';
     RAISE NOTICE 'All existing vectors have been removed.';
     RAISE NOTICE 'Documents are preserved and ready for reprocessing.';

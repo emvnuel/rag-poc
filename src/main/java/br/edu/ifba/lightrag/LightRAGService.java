@@ -89,11 +89,26 @@ public class LightRAGService {
     @ConfigProperty(name = "lightrag.entity.extraction.system.prompt")
     String entityExtractionSystemPrompt;
 
+    @ConfigProperty(name = "lightrag.entity.types")
+    String entityTypes;
+
+    @ConfigProperty(name = "lightrag.extraction.language")
+    String extractionLanguage;
+
+    @ConfigProperty(name = "lightrag.entity.extraction.user.prompt")
+    String entityExtractionUserPrompt;
+
     @ConfigProperty(name = "lightrag.kg.extraction.batch.size", defaultValue = "20")
     int kgExtractionBatchSize;
 
     @ConfigProperty(name = "lightrag.embedding.batch.size", defaultValue = "32")
     int embeddingBatchSize;
+
+    @ConfigProperty(name = "lightrag.entity.description.max.length", defaultValue = "1000")
+    int entityDescriptionMaxLength;
+
+    @ConfigProperty(name = "lightrag.entity.description.separator", defaultValue = " | ")
+    String entityDescriptionSeparator;
 
     private LightRAG lightRAG;
     private JsonKVStorage chunkKVStorage;
@@ -130,7 +145,9 @@ public class LightRAGService {
                     topK,
                     true,  // enableCache
                     kgExtractionBatchSize,
-                    embeddingBatchSize
+                    embeddingBatchSize,
+                    entityDescriptionMaxLength,
+                    entityDescriptionSeparator
             );
 
             // Build LightRAG instance
@@ -151,6 +168,9 @@ public class LightRAGService {
                     .mixSystemPrompt(mixSystemPrompt)
                     .bypassSystemPrompt(bypassSystemPrompt)
                     .entityExtractionSystemPrompt(entityExtractionSystemPrompt)
+                    .entityTypes(entityTypes)
+                    .extractionLanguage(extractionLanguage)
+                    .entityExtractionUserPrompt(entityExtractionUserPrompt)
                     .build();
 
             // Initialize LightRAG (async operation)

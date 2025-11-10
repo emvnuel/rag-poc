@@ -141,18 +141,30 @@ public class ChatService {
         }
 
         // If no citable sources exist:
-        // - If we have a LightRAG answer (e.g., from GLOBAL mode with entities), use it as context
+        // - If we have a LightRAG answer (e.g., from GLOBAL mode with entities), check if it's valid
         // - Otherwise, use the no-context prompt
         if (citableSources == 0) {
             if (hasLightRAGAnswer) {
+                final SearchResult lightRAGAnswer = sources.get(0);
+                final String answerText = lightRAGAnswer.chunkText();
+                
+                // Check if LightRAG response is empty/blank or indicates no information
+                // Empty responses mean no relevant context was found
+                if (answerText == null || answerText.isBlank() ||
+                    answerText.contains("Não encontrei informações") || 
+                    answerText.contains("não encontrei informações") ||
+                    answerText.contains("Não há documentos disponíveis")) {
+                    LOG.infof("LightRAG has no valid content, using no-context prompt");
+                    return systemPromptNoContext;
+                }
+                
                 LOG.infof("No citable sources but LightRAG answer available, using it as context");
                 // Use the LightRAG answer as the context
-                final SearchResult lightRAGAnswer = sources.get(0);
                 final StringBuilder context = new StringBuilder();
                 context.append(systemPromptWithContext);
                 context.append("\n\n");
                 context.append("Contexto (baseado no grafo de conhecimento):\n");
-                context.append(lightRAGAnswer.chunkText());
+                context.append(answerText);
                 context.append("\n\nResponda com base neste contexto.");
                 return context.toString();
             } else {
