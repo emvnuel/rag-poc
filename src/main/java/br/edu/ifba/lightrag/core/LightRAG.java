@@ -949,14 +949,20 @@ public class LightRAG {
             }
         }
         
+        // Extract projectId from metadata for graph isolation
+        String graphProjectId = metadata != null ? (String) metadata.get("project_id") : null;
+        if (graphProjectId == null) {
+            throw new IllegalArgumentException("project_id is required in metadata for graph operations");
+        }
+        
         // Store entities in graph using batch operation (reduces connection pool usage)
-        CompletableFuture<Void> entitiesFuture = graphStorage.upsertEntities(new ArrayList<>(uniqueEntities.values()));
+        CompletableFuture<Void> entitiesFuture = graphStorage.upsertEntities(graphProjectId, new ArrayList<>(uniqueEntities.values()));
         
         // Store relations in graph using batch operation (reduces connection pool usage)
         // IMPORTANT: Relations must wait for entities to complete first to avoid race conditions
         // where relation MERGE creates name-only entities before entity upsert completes
         CompletableFuture<Void> relationsFuture = entitiesFuture
-            .thenCompose(v -> graphStorage.upsertRelations(relations));
+            .thenCompose(v -> graphStorage.upsertRelations(graphProjectId, relations));
         
         // Generate and store entity embeddings
         List<String> entityTexts = uniqueEntities.values().stream()

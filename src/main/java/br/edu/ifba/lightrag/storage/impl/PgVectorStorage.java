@@ -85,17 +85,20 @@ public class PgVectorStorage implements VectorStorage {
                 stmt.execute(createTableSql);
                 
                 // Try to add foreign key constraint if document table exists
+                // Note: Using ag_catalog schema since Hibernate tables are created there
                 // This is done separately so initialization doesn't fail if document table doesn't exist yet
                 try {
                     String addConstraintSql = String.format("""
                         DO $$
                         BEGIN
                             IF NOT EXISTS (
-                                SELECT 1 FROM pg_constraint WHERE conname = 'fk_document'
+                                SELECT 1 FROM pg_constraint 
+                                WHERE conname = 'fk_lightrag_vectors_document'
+                                AND conrelid = 'ag_catalog.lightrag_vectors'::regclass
                             ) THEN
-                                ALTER TABLE %s 
-                                ADD CONSTRAINT fk_document 
-                                FOREIGN KEY (document_id) REFERENCES public.document(id) ON DELETE CASCADE;
+                                ALTER TABLE ag_catalog.%s 
+                                ADD CONSTRAINT fk_lightrag_vectors_document 
+                                FOREIGN KEY (document_id) REFERENCES ag_catalog.documents(id) ON DELETE CASCADE;
                             END IF;
                         END
                         $$;

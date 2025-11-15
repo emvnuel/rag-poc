@@ -73,11 +73,11 @@ public class GlobalQueryExecutor extends QueryExecutor {
                 }
                 
                 // Step 4: Get entities and their relationships from graph
-                return graphStorage.getEntities(entityIds).thenCompose((List<Entity> entities) -> {
+                return graphStorage.getEntities(param.getProjectId(), entityIds).thenCompose((List<Entity> entities) -> {
                     // Get relations for each entity
                     List<CompletableFuture<List<Relation>>> relationFutures = new ArrayList<>();
                     for (String entityId : entityIds) {
-                        relationFutures.add(graphStorage.getRelationsForEntity(entityId));
+                        relationFutures.add(graphStorage.getRelationsForEntity(param.getProjectId(), entityId));
                     }
                     
                     return CompletableFuture.allOf(relationFutures.toArray(new CompletableFuture[0]))
