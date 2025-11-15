@@ -5,6 +5,8 @@ import jakarta.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -51,8 +53,48 @@ public class EntityClusterer {
             throw new IllegalArgumentException("threshold must be in [0.0, 1.0]");
         }
         
-        // TODO: Implement clustering algorithm
-        throw new UnsupportedOperationException("Not yet implemented");
+        int n = entities.size();
+        if (n == 0) {
+            return new java.util.ArrayList<>();
+        }
+        
+        // Track which nodes have been visited
+        boolean[] visited = new boolean[n];
+        List<Set<Integer>> clusters = new java.util.ArrayList<>();
+        
+        // Find connected components using DFS
+        for (int i = 0; i < n; i++) {
+            if (!visited[i]) {
+                Set<Integer> cluster = new java.util.HashSet<>();
+                dfs(i, visited, cluster, similarityMatrix, threshold, n);
+                clusters.add(cluster);
+            }
+        }
+        
+        return clusters;
+    }
+    
+    /**
+     * Depth-first search to find connected components.
+     * 
+     * @param node Current node index
+     * @param visited Array tracking visited nodes
+     * @param cluster Current cluster being built
+     * @param similarityMatrix Similarity scores
+     * @param threshold Similarity threshold
+     * @param n Number of nodes
+     */
+    private void dfs(int node, boolean[] visited, Set<Integer> cluster, 
+                     double[][] similarityMatrix, double threshold, int n) {
+        visited[node] = true;
+        cluster.add(node);
+        
+        // Visit all neighbors (entities with similarity >= threshold)
+        for (int neighbor = 0; neighbor < n; neighbor++) {
+            if (!visited[neighbor] && similarityMatrix[node][neighbor] >= threshold) {
+                dfs(neighbor, visited, cluster, similarityMatrix, threshold, n);
+            }
+        }
     }
     
     /**
@@ -77,8 +119,59 @@ public class EntityClusterer {
             throw new IllegalArgumentException("entities cannot be null");
         }
         
-        // TODO: Implement cluster merging
-        throw new UnsupportedOperationException("Not yet implemented");
+        // Step 1: Find canonical entity (longest name)
+        Entity canonicalEntity = null;
+        int maxNameLength = -1;
+        
+        for (int idx : clusterIndices) {
+            Entity entity = entities.get(idx);
+            String name = entity.getEntityName();
+            if (name != null && name.length() > maxNameLength) {
+                maxNameLength = name.length();
+                canonicalEntity = entity;
+            }
+        }
+        
+        // Step 2: Extract aliases (all names except canonical)
+        List<String> aliases = new ArrayList<>();
+        String canonicalName = canonicalEntity.getEntityName();
+        
+        for (int idx : clusterIndices) {
+            Entity entity = entities.get(idx);
+            String name = entity.getEntityName();
+            if (name != null && !name.equals(canonicalName)) {
+                aliases.add(name);
+            }
+        }
+        
+        // Step 3: Merge descriptions with " | " separator
+        StringBuilder mergedDescription = new StringBuilder();
+        boolean first = true;
+        
+        for (int idx : clusterIndices) {
+            Entity entity = entities.get(idx);
+            String desc = entity.getDescription();
+            if (desc != null && !desc.isBlank()) {
+                if (!first) {
+                    mergedDescription.append(" | ");
+                }
+                mergedDescription.append(desc);
+                first = false;
+            }
+        }
+        
+        // Handle case where all descriptions are blank
+        String finalDescription = mergedDescription.length() > 0 
+            ? mergedDescription.toString() 
+            : "No description available";
+        
+        // Step 4: Create EntityCluster
+        return new EntityCluster(
+            canonicalEntity,
+            clusterIndices,
+            aliases,
+            finalDescription
+        );
     }
     
     /**
@@ -103,7 +196,26 @@ public class EntityClusterer {
             throw new IllegalArgumentException("calculator cannot be null");
         }
         
-        // TODO: Implement similarity matrix building
-        throw new UnsupportedOperationException("Not yet implemented");
+        int n = entities.size();
+        double[][] matrix = new double[n][n];
+        
+        // Compute pairwise similarities
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                if (i == j) {
+                    // Diagonal: entity compared to itself
+                    matrix[i][j] = 1.0;
+                } else {
+                    // Off-diagonal: compute similarity
+                    EntitySimilarityScore score = calculator.computeSimilarity(
+                        entities.get(i), 
+                        entities.get(j)
+                    );
+                    matrix[i][j] = score.finalScore();
+                }
+            }
+        }
+        
+        return matrix;
     }
 }

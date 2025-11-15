@@ -149,12 +149,19 @@ public class ChatService {
                 final String answerText = lightRAGAnswer.chunkText();
                 
                 // Check if LightRAG response is empty/blank or indicates no information
-                // Empty responses mean no relevant context was found
-                if (answerText == null || answerText.isBlank() ||
-                    answerText.contains("Não encontrei informações") || 
-                    answerText.contains("não encontrei informações") ||
-                    answerText.contains("Não há documentos disponíveis")) {
-                    LOG.infof("LightRAG has no valid content, using no-context prompt");
+                // Only reject if the ENTIRE response is a "not found" message
+                // Accept partial answers that contain some information even if they indicate missing parts
+                if (answerText == null || answerText.isBlank()) {
+                    LOG.infof("LightRAG returned empty answer, using no-context prompt");
+                    return systemPromptNoContext;
+                }
+                
+                // Check if response is ONLY a "not found" message (no other content)
+                String trimmed = answerText.trim();
+                if (trimmed.equals("Não encontrei informações sobre isso nos documentos disponíveis.") ||
+                    trimmed.equals("Não há documentos disponíveis neste projeto.") ||
+                    trimmed.equals("Não há documentos disponíveis neste projeto. Por favor, adicione documentos relevantes para que eu possa responder suas perguntas.")) {
+                    LOG.infof("LightRAG has no valid content (only 'not found' message), using no-context prompt");
                     return systemPromptNoContext;
                 }
                 

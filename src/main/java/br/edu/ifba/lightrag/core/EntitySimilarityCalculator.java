@@ -44,8 +44,41 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("entity2 cannot be null");
         }
         
-        // TODO: Implement similarity calculation
-        throw new UnsupportedOperationException("Not yet implemented");
+        String name1 = entity1.getEntityName();
+        String name2 = entity2.getEntityName();
+        String type1 = entity1.getEntityType() != null ? entity1.getEntityType() : "";
+        String type2 = entity2.getEntityType() != null ? entity2.getEntityType() : "";
+        
+        // Type safety check
+        if (!type1.equalsIgnoreCase(type2)) {
+            return new EntitySimilarityScore(
+                name1, name2, type1, type2,
+                0.0, 0.0, 0.0, 0.0, 0.0
+            );
+        }
+        
+        // Compute individual metrics
+        double jaccard = computeJaccardSimilarity(name1, name2);
+        double containment = computeContainmentScore(name1, name2);
+        double levenshtein = computeLevenshteinSimilarity(name1, name2);
+        double abbreviation = computeAbbreviationScore(name1, name2);
+        
+        // Weighted final score using config weights
+        double finalScore = config.weight().jaccard() * jaccard 
+                          + config.weight().containment() * containment 
+                          + config.weight().edit() * levenshtein 
+                          + config.weight().abbreviation() * abbreviation;
+        
+        // Log similarity computation for debugging
+        if (abbreviation > 0.5 || finalScore > 0.3) {
+            logger.debug("Similarity '{}' vs '{}': jaccard={}, containment={}, edit={}, abbr={}, final={}",
+                name1, name2, jaccard, containment, levenshtein, abbreviation, finalScore);
+        }
+        
+        return new EntitySimilarityScore(
+            name1, name2, type1, type2,
+            jaccard, containment, levenshtein, abbreviation, finalScore
+        );
     }
     
     /**
@@ -74,8 +107,22 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("type2 cannot be null");
         }
         
-        // TODO: Implement name similarity calculation
-        throw new UnsupportedOperationException("Not yet implemented");
+        // Type safety: never merge entities of different types
+        if (!type1.equalsIgnoreCase(type2)) {
+            return 0.0;
+        }
+        
+        // Compute individual metrics
+        double jaccard = computeJaccardSimilarity(name1, name2);
+        double containment = computeContainmentScore(name1, name2);
+        double levenshtein = computeLevenshteinSimilarity(name1, name2);
+        double abbreviation = computeAbbreviationScore(name1, name2);
+        
+        // Weighted combination using configured weights
+        return config.weight().jaccard() * jaccard 
+             + config.weight().containment() * containment 
+             + config.weight().edit() * levenshtein 
+             + config.weight().abbreviation() * abbreviation;
     }
     
     /**
@@ -95,8 +142,26 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("name2 cannot be null");
         }
         
-        // TODO: Implement Jaccard similarity
-        throw new UnsupportedOperationException("Not yet implemented");
+        Set<String> tokens1 = tokenize(name1);
+        Set<String> tokens2 = tokenize(name2);
+        
+        // Empty strings should return 0.0
+        if (tokens1.isEmpty() && tokens2.isEmpty()) {
+            return 0.0;
+        }
+        if (tokens1.isEmpty() || tokens2.isEmpty()) {
+            return 0.0;
+        }
+        
+        // Compute intersection
+        Set<String> intersection = new HashSet<>(tokens1);
+        intersection.retainAll(tokens2);
+        
+        // Compute union
+        Set<String> union = new HashSet<>(tokens1);
+        union.addAll(tokens2);
+        
+        return (double) intersection.size() / union.size();
     }
     
     /**
@@ -117,8 +182,14 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("name2 cannot be null");
         }
         
-        // TODO: Implement containment score
-        throw new UnsupportedOperationException("Not yet implemented");
+        String normalized1 = normalizeName(name1);
+        String normalized2 = normalizeName(name2);
+        
+        if (normalized1.contains(normalized2) || normalized2.contains(normalized1)) {
+            return 1.0;
+        }
+        
+        return 0.0;
     }
     
     /**
@@ -138,8 +209,56 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("name2 cannot be null");
         }
         
-        // TODO: Implement Levenshtein similarity
-        throw new UnsupportedOperationException("Not yet implemented");
+        String normalized1 = normalizeName(name1);
+        String normalized2 = normalizeName(name2);
+        
+        if (normalized1.equals(normalized2)) {
+            return 1.0;
+        }
+        
+        int maxLength = Math.max(normalized1.length(), normalized2.length());
+        if (maxLength == 0) {
+            return 1.0;
+        }
+        
+        int distance = computeLevenshteinDistance(normalized1, normalized2);
+        return 1.0 - ((double) distance / maxLength);
+    }
+    
+    /**
+     * Computes the Levenshtein distance between two strings.
+     * 
+     * @param s1 First string
+     * @param s2 Second string
+     * @return Edit distance
+     */
+    private int computeLevenshteinDistance(String s1, String s2) {
+        int len1 = s1.length();
+        int len2 = s2.length();
+        
+        if (len1 == 0) return len2;
+        if (len2 == 0) return len1;
+        
+        int[][] dp = new int[len1 + 1][len2 + 1];
+        
+        for (int i = 0; i <= len1; i++) {
+            dp[i][0] = i;
+        }
+        for (int j = 0; j <= len2; j++) {
+            dp[0][j] = j;
+        }
+        
+        for (int i = 1; i <= len1; i++) {
+            for (int j = 1; j <= len2; j++) {
+                int cost = (s1.charAt(i - 1) == s2.charAt(j - 1)) ? 0 : 1;
+                dp[i][j] = Math.min(
+                    Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
+                    dp[i - 1][j - 1] + cost
+                );
+            }
+        }
+        
+        return dp[len1][len2];
     }
     
     /**
@@ -160,8 +279,55 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("name2 cannot be null");
         }
         
-        // TODO: Implement abbreviation matching
-        throw new UnsupportedOperationException("Not yet implemented");
+        String normalized1 = normalizeName(name1);
+        String normalized2 = normalizeName(name2);
+        
+        // Identical names get full score
+        if (normalized1.equals(normalized2)) {
+            return 1.0;
+        }
+        
+        // Check if either could be an acronym (short, no spaces)
+        if (isAcronymMatch(normalized1, normalized2)) {
+            return 1.0;
+        }
+        if (isAcronymMatch(normalized2, normalized1)) {
+            return 1.0;
+        }
+        
+        return 0.0;
+    }
+    
+    /**
+     * Checks if the short name is an acronym of the long name.
+     * 
+     * @param shortName Potential acronym
+     * @param longName Full name
+     * @return true if shortName matches first letters of longName words (skipping common stop words)
+     */
+    private boolean isAcronymMatch(String shortName, String longName) {
+        // Short name should have no spaces and be shorter
+        if (shortName.contains(" ") || shortName.length() >= longName.length()) {
+            return false;
+        }
+        
+        String[] words = longName.split("\\s+");
+        if (words.length < 2) {
+            return false;
+        }
+        
+        // Common stop words to skip in acronyms
+        Set<String> stopWords = Set.of("a", "an", "the", "of", "and", "or", "for", "in", "on", "at", "to", "from");
+        
+        // Extract first letters, skipping stop words
+        StringBuilder acronym = new StringBuilder();
+        for (String word : words) {
+            if (!word.isEmpty() && !stopWords.contains(word)) {
+                acronym.append(word.charAt(0));
+            }
+        }
+        
+        return shortName.equals(acronym.toString());
     }
     
     /**
@@ -181,8 +347,11 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("name cannot be null");
         }
         
-        // TODO: Implement name normalization
-        throw new UnsupportedOperationException("Not yet implemented");
+        // Remove all punctuation, lowercase, trim, and collapse spaces
+        return name.replaceAll("[^a-zA-Z0-9\\s]", "")
+                   .toLowerCase()
+                   .trim()
+                   .replaceAll("\\s+", " ");
     }
     
     /**
@@ -196,7 +365,18 @@ public class EntitySimilarityCalculator {
             throw new IllegalArgumentException("name cannot be null");
         }
         
-        // TODO: Implement tokenization
-        throw new UnsupportedOperationException("Not yet implemented");
+        String normalized = normalizeName(name);
+        if (normalized.isEmpty()) {
+            return new HashSet<>();
+        }
+        
+        String[] tokens = normalized.split("\\s+");
+        Set<String> result = new HashSet<>();
+        for (String token : tokens) {
+            if (!token.isEmpty()) {
+                result.add(token);
+            }
+        }
+        return result;
     }
 }

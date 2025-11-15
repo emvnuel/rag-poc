@@ -12,7 +12,7 @@
 - **Package**: `br.edu.ifba`
 
 ## Code Style
-- **Imports**: Jakarta (`jakarta.ws.rs.*`), not javax. Standard imports before third-party
+- **Imports**: Jakarta (`jakarta.ws.rs.*`), not javax. Standard imports before third-party. NEVER use inline imports (e.g., avoid `import br.edu.ifba.lightrag.core.EntityResolver; import br.edu.ifba.lightrag.core.DeduplicationConfig;` on single lines). Always use separate lines for each import.
 - **Annotations**: Use `@Path`, `@GET/@POST`, `@Produces`, `@QuarkusTest` for tests
 - **Testing**: JUnit 5 + REST Assured. Pattern: `given().when().get("/path").then().statusCode(200).body(is("expected"))`
 - **Naming**: Classes end with `Resource` for REST endpoints, `Test` for tests, `IT` for integration tests
