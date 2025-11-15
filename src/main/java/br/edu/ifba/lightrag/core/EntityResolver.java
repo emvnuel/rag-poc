@@ -1,5 +1,6 @@
 package br.edu.ifba.lightrag.core;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.slf4j.Logger;
@@ -35,6 +36,25 @@ public class EntityResolver {
     
     @Inject
     EntityClusterer clusterer;
+    
+    /**
+     * Validates configuration at startup.
+     */
+    @PostConstruct
+    void init() {
+        if (config.enabled()) {
+            try {
+                config.validate();
+                logger.info("Entity resolution configuration validated successfully (threshold={}, parallel={}, batch={})",
+                           config.similarity().threshold(), config.parallel().enabled(), config.batch().size());
+            } catch (IllegalArgumentException e) {
+                logger.error("Invalid entity resolution configuration: {}", e.getMessage());
+                throw e;
+            }
+        } else {
+            logger.info("Entity resolution is disabled");
+        }
+    }
     
     /**
      * Resolves duplicate entities in a list.
@@ -117,6 +137,23 @@ public class EntityResolver {
                 for (Set<Integer> cluster : clusters) {
                     EntityCluster mergedCluster = clusterer.mergeCluster(cluster, typeEntities);
                     resolvedEntities.add(mergedCluster.canonicalEntity());
+                    
+                    // Audit log for merge decision (only if enabled and cluster has >1 entity)
+                    if (config.log().merges() && cluster.size() > 1) {
+                        List<String> mergedNames = cluster.stream()
+                            .map(typeEntities::get)
+                            .map(Entity::getEntityName)
+                            .collect(Collectors.toList());
+                        
+                        logger.info("MERGE DECISION: Canonical='{}' Type='{}' ClusterSize={} MergedEntities={} " +
+                                   "Aliases={} Project={}",
+                                   mergedCluster.canonicalEntity().getEntityName(),
+                                   type,
+                                   cluster.size(),
+                                   mergedNames,
+                                   mergedCluster.aliases(),
+                                   projectId != null ? projectId : "N/A");
+                    }
                 }
                 long mergingMs = Duration.between(mergingStart, Instant.now()).toMillis();
                 totalMergingMs += mergingMs;
@@ -130,6 +167,15 @@ public class EntityResolver {
                        "[grouping={}ms, similarity={}ms, clustering={}ms, merging={}ms]", 
                        entities.size(), resolvedEntities.size(), duplicatesRemoved, reductionPercent, overallMs,
                        groupingMs, totalSimilarityMs, totalClusteringMs, totalMergingMs);
+            
+            // Warn if deduplication rate is unusually high (>60%)
+            if (reductionPercent > 60.0) {
+                logger.warn("High deduplication rate detected: {:.1f}% ({} → {} entities). " +
+                           "This may indicate overly aggressive merging. " +
+                           "Consider increasing similarity threshold (current: {})",
+                           reductionPercent, entities.size(), resolvedEntities.size(), 
+                           config.similarity().threshold());
+            }
             
             return resolvedEntities;
             
@@ -226,6 +272,23 @@ public class EntityResolver {
                 for (Set<Integer> cluster : clusters) {
                     EntityCluster mergedCluster = clusterer.mergeCluster(cluster, typeEntities);
                     resolvedEntities.add(mergedCluster.canonicalEntity());
+                    
+                    // Audit log for merge decision (only if enabled and cluster has >1 entity)
+                    if (config.log().merges() && cluster.size() > 1) {
+                        List<String> mergedNames = cluster.stream()
+                            .map(typeEntities::get)
+                            .map(Entity::getEntityName)
+                            .collect(Collectors.toList());
+                        
+                        logger.info("MERGE DECISION: Canonical='{}' Type='{}' ClusterSize={} MergedEntities={} " +
+                                   "Aliases={} Project={}",
+                                   mergedCluster.canonicalEntity().getEntityName(),
+                                   type,
+                                   cluster.size(),
+                                   mergedNames,
+                                   mergedCluster.aliases(),
+                                   projectId != null ? projectId : "N/A");
+                    }
                 }
                 long mergingMs = Duration.between(mergingStart, Instant.now()).toMillis();
                 totalMergingMs += mergingMs;
@@ -242,6 +305,15 @@ public class EntityResolver {
                        "[grouping={}ms, similarity={}ms, clustering={}ms, merging={}ms]", 
                        originalCount, resolvedCount, duplicatesRemoved, reductionPercent, processingTime.toMillis(),
                        groupingMs, totalSimilarityMs, totalClusteringMs, totalMergingMs);
+            
+            // Warn if deduplication rate is unusually high (>60%)
+            if (reductionPercent > 60.0) {
+                logger.warn("High deduplication rate detected: {:.1f}% ({} → {} entities). " +
+                           "This may indicate overly aggressive merging. " +
+                           "Consider increasing similarity threshold (current: {})",
+                           reductionPercent, originalCount, resolvedCount, 
+                           config.similarity().threshold());
+            }
             
             return new EntityResolutionResult(
                 resolvedEntities,

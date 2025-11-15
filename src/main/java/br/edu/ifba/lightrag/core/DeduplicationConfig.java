@@ -85,6 +85,17 @@ public interface DeduplicationConfig {
             );
         }
         
+        // Validate individual weights are non-negative
+        if (weight().jaccard() < 0.0 || weight().containment() < 0.0 || 
+            weight().edit() < 0.0 || weight().abbreviation() < 0.0) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "All weights must be non-negative (jaccard=%.2f, containment=%.2f, edit=%.2f, abbrev=%.2f)",
+                    weight().jaccard(), weight().containment(), weight().edit(), weight().abbreviation()
+                )
+            );
+        }
+        
         // Validate threshold
         if (similarity().threshold() < 0.0 || similarity().threshold() > 1.0) {
             throw new IllegalArgumentException(
@@ -96,6 +107,34 @@ public interface DeduplicationConfig {
         if (!clustering().algorithm().equals("threshold") && !clustering().algorithm().equals("dbscan")) {
             throw new IllegalArgumentException(
                 String.format("Clustering algorithm must be 'threshold' or 'dbscan', got '%s'", clustering().algorithm())
+            );
+        }
+        
+        // Validate batch size
+        if (batch().size() < 1) {
+            throw new IllegalArgumentException(
+                String.format("Batch size must be positive, got %d", batch().size())
+            );
+        }
+        
+        // Validate parallel threads
+        if (parallel().threads() < 1) {
+            throw new IllegalArgumentException(
+                String.format("Number of parallel threads must be positive, got %d", parallel().threads())
+            );
+        }
+        
+        // Validate max aliases
+        if (maxAliases() < 0) {
+            throw new IllegalArgumentException(
+                String.format("Maximum aliases must be non-negative, got %d", maxAliases())
+            );
+        }
+        
+        // Validate semantic weight (if semantic enabled)
+        if (semantic().enabled() && (semantic().weight() < 0.0 || semantic().weight() > 1.0)) {
+            throw new IllegalArgumentException(
+                String.format("Semantic weight must be in [0.0, 1.0], got %.3f", semantic().weight())
             );
         }
     }
