@@ -45,6 +45,10 @@ public class LightRAG {
     private final GraphStorage graphStorage;
     private final DocStatusStorage docStatusStorage;
     
+    // Entity deduplication (optional)
+    private final EntityResolver entityResolver;
+    private final DeduplicationConfig deduplicationConfig;
+    
     // System prompts for query modes
     private final String localSystemPrompt;
     private final String globalSystemPrompt;
@@ -101,6 +105,8 @@ public class LightRAG {
         private String entityTypes;
         private String extractionLanguage;
         private String entityExtractionUserPrompt;
+        private EntityResolver entityResolver;
+        private DeduplicationConfig deduplicationConfig;
         
         public Builder config(@NotNull LightRAGConfig config) {
             this.config = config;
@@ -197,6 +203,16 @@ public class LightRAG {
             return this;
         }
         
+        public Builder entityResolver(@Nullable EntityResolver entityResolver) {
+            this.entityResolver = entityResolver;
+            return this;
+        }
+        
+        public Builder deduplicationConfig(@Nullable DeduplicationConfig deduplicationConfig) {
+            this.deduplicationConfig = deduplicationConfig;
+            return this;
+        }
+        
         public LightRAG build() {
             if (llmFunction == null) {
                 throw new IllegalStateException("llmFunction is required");
@@ -272,7 +288,9 @@ public class LightRAG {
                 entityExtractionSystemPrompt,
                 entityTypes,
                 extractionLanguage,
-                entityExtractionUserPrompt
+                entityExtractionUserPrompt,
+                entityResolver,
+                deduplicationConfig
             );
         }
     }
@@ -299,7 +317,9 @@ public class LightRAG {
         @NotNull String entityExtractionSystemPrompt,
         @NotNull String entityTypes,
         @NotNull String extractionLanguage,
-        @NotNull String entityExtractionUserPrompt
+        @NotNull String entityExtractionUserPrompt,
+        @Nullable EntityResolver entityResolver,
+        @Nullable DeduplicationConfig deduplicationConfig
     ) {
         this.config = config;
         this.llmFunction = llmFunction;
@@ -310,6 +330,8 @@ public class LightRAG {
         this.entityVectorStorage = entityVectorStorage;
         this.graphStorage = graphStorage;
         this.docStatusStorage = docStatusStorage;
+        this.entityResolver = entityResolver;
+        this.deduplicationConfig = deduplicationConfig;
         this.localSystemPrompt = localSystemPrompt;
         this.globalSystemPrompt = globalSystemPrompt;
         this.hybridSystemPrompt = hybridSystemPrompt;
@@ -931,9 +953,37 @@ public class LightRAG {
             return CompletableFuture.completedFuture(null);
         }
         
-        // Deduplicate entities by name and accumulate descriptions
+        // Extract projectId from metadata for graph isolation
+        String graphProjectId = metadata != null ? (String) metadata.get("project_id") : null;
+        if (graphProjectId == null) {
+            throw new IllegalArgumentException("project_id is required in metadata for graph operations");
+        }
+        
+        // Step 1: Apply semantic entity deduplication if enabled (T034, T035)
+        List<Entity> entitiesToProcess = entities;
+        if (entityResolver != null && deduplicationConfig != null && deduplicationConfig.enabled()) {
+            logger.debug("Applying semantic entity deduplication for {} entities", entities.size());
+            EntityResolutionResult resolutionResult = entityResolver.resolveDuplicatesWithStats(
+                entities, 
+                graphProjectId
+            );
+            entitiesToProcess = resolutionResult.resolvedEntities();
+            
+            // T036: Log resolution statistics
+            if (resolutionResult.hadDuplicates()) {
+                logger.info("Semantic deduplication: {} → {} entities (removed {} duplicates, {} clusters, {}ms)",
+                    resolutionResult.originalEntityCount(),
+                    resolutionResult.resolvedEntityCount(),
+                    resolutionResult.duplicatesRemoved(),
+                    resolutionResult.clustersFound(),
+                    resolutionResult.processingTime().toMillis()
+                );
+            }
+        }
+        
+        // Step 2: Deduplicate entities by exact name match and accumulate descriptions
         Map<String, Entity> uniqueEntities = new HashMap<>();
-        for (Entity entity : entities) {
+        for (Entity entity : entitiesToProcess) {
             String entityName = entity.getEntityName();
             if (uniqueEntities.containsKey(entityName)) {
                 // Entity already exists in this batch - merge descriptions
@@ -947,12 +997,6 @@ public class LightRAG {
                 // First occurrence of this entity in this batch
                 uniqueEntities.put(entityName, entity);
             }
-        }
-        
-        // Extract projectId from metadata for graph isolation
-        String graphProjectId = metadata != null ? (String) metadata.get("project_id") : null;
-        if (graphProjectId == null) {
-            throw new IllegalArgumentException("project_id is required in metadata for graph operations");
         }
         
         // Store entities in graph using batch operation (reduces connection pool usage)

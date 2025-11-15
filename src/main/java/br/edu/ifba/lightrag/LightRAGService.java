@@ -53,6 +53,12 @@ public class LightRAGService {
     @Inject
     AgeConfig ageConfig;
 
+    @Inject
+    br.edu.ifba.lightrag.core.EntityResolver entityResolver;
+
+    @Inject
+    br.edu.ifba.lightrag.core.DeduplicationConfig deduplicationConfig;
+
     @ConfigProperty(name = "lightrag.chunk.size", defaultValue = "1200")
     int chunkSize;
 
@@ -161,6 +167,8 @@ public class LightRAGService {
                     .entityVectorStorage(entityVectorStorage)
                     .graphStorage(graphStorage)
                     .docStatusStorage(docStatusStorage)
+                    .entityResolver(entityResolver)
+                    .deduplicationConfig(deduplicationConfig)
                     .localSystemPrompt(localSystemPrompt)
                     .globalSystemPrompt(globalSystemPrompt)
                     .hybridSystemPrompt(hybridSystemPrompt)

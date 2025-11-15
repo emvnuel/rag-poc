@@ -25,8 +25,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 
-import jakarta.annotation.PostConstruct;
-
 /**
  * Adapter that bridges the existing Quarkus LlmChatClient to LightRAG's LLMFunction interface.
  * This allows LightRAG to use the Quarkus-managed LLM client for all chat completions.

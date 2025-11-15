@@ -61,3 +61,11 @@ quarkus-output.log
 
 # Backup files
 *.bak
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp

@@ -1,7 +1,6 @@
 package br.edu.ifba.lightrag.storage.impl;
 
 import br.edu.ifba.lightrag.storage.VectorStorage;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -43,14 +42,12 @@ public class PgVectorStorage implements VectorStorage {
     @ConfigProperty(name = "lightrag.vector.dimension", defaultValue = "384")
     int dimension;
     
-    private final ObjectMapper objectMapper;
     private final ExecutorService executor;
     
     /**
      * Default constructor for CDI.
      */
     public PgVectorStorage() {
-        this.objectMapper = new ObjectMapper();
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
     }
     

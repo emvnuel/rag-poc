@@ -4,3 +4,12 @@
 !target/lib/*
 !target/quarkus-app/*
 !docker-init/*
+
+# Exclude development files
+.git/
+.idea/
+.vscode/
+*.log
+.env*
+test-data/
+*.bak

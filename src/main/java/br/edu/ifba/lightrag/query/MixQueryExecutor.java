@@ -77,9 +77,8 @@ public class MixQueryExecutor extends QueryExecutor {
                         if (seedEntityIds.isEmpty()) {
                             // Only chunks available
                             List<LightRAGQueryResult.SourceChunk> chunkSources = convertToSourceChunks(chunkResults);
-                            String context = formatChunkContextWithCitations(chunkResults);
                             return CompletableFuture.completedFuture(
-                                new ResultWithSources(context, chunkSources, Collections.emptyList())
+                                new ResultWithSources(chunkSources, Collections.emptyList())
                             );
                         }
                         
@@ -109,7 +108,6 @@ public class MixQueryExecutor extends QueryExecutor {
                                                 List<LightRAGQueryResult.SourceChunk> chunkSources = convertToSourceChunks(chunkResults);
                                                 
                                                 return new ResultWithSources(
-                                                    formatGraphContextWithEntities(entities, relations),
                                                     chunkSources,
                                                     entitySources
                                                 );
@@ -174,17 +172,14 @@ public class MixQueryExecutor extends QueryExecutor {
     }
     
     /**
-     * Helper class to carry both context and sources through the pipeline
+     * Helper class to carry sources through the pipeline
      */
     private static class ResultWithSources {
-        final String graphContext;
         final List<LightRAGQueryResult.SourceChunk> chunkSources;
         final List<LightRAGQueryResult.SourceChunk> entitySources;
         
-        ResultWithSources(String graphContext, 
-                         List<LightRAGQueryResult.SourceChunk> chunkSources,
+        ResultWithSources(List<LightRAGQueryResult.SourceChunk> chunkSources,
                          List<LightRAGQueryResult.SourceChunk> entitySources) {
-            this.graphContext = graphContext;
             this.chunkSources = chunkSources;
             this.entitySources = entitySources;
         }
