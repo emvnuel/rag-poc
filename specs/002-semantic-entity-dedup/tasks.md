@@ -154,17 +154,17 @@
 
 ### Tests for User Story 3
 
-- [ ] T044 [P] [US3] Add semantic similarity test cases to EntitySimilarityCalculatorTest using entity embeddings
-- [ ] T045 [P] [US3] Add description-based integration test to EntityDeduplicationIT with "CEO of Microsoft" vs "Satya Nadella"
+- [~] T044 [P] [US3] Add semantic similarity test cases to EntitySimilarityCalculatorTest using entity embeddings
+- [~] T045 [P] [US3] Add description-based integration test to EntityDeduplicationIT with "CEO of Microsoft" vs "Satya Nadella"
 
 ### Implementation for User Story 3
 
-- [ ] T046 [US3] Add computeSemanticSimilarity method to EntitySimilarityCalculator using PgVectorStorage for embedding retrieval
-- [ ] T047 [US3] Implement cosine similarity calculation in EntitySimilarityCalculator for vector embeddings
-- [ ] T048 [US3] Update computeSimilarity in EntitySimilarityCalculator to combine string similarity with semantic similarity when config.semanticEnabled()=true
-- [ ] T049 [US3] Add semantic similarity weight configuration to DeduplicationConfig (default 0.40)
-- [ ] T050 [US3] Update EntityResolver to handle missing descriptions gracefully (skip semantic similarity if description is null)
-- [ ] T051 [US3] Add semantic similarity logging to EntityResolver at DEBUG level
+- [~] T046 [US3] Add computeSemanticSimilarity method to EntitySimilarityCalculator using PgVectorStorage for embedding retrieval
+- [~] T047 [US3] Implement cosine similarity calculation in EntitySimilarityCalculator for vector embeddings
+- [~] T048 [US3] Update computeSimilarity in EntitySimilarityCalculator to combine string similarity with semantic similarity when config.semanticEnabled()=true
+- [~] T049 [US3] Add semantic similarity weight configuration to DeduplicationConfig (default 0.40)
+- [~] T050 [US3] Update EntityResolver to handle missing descriptions gracefully (skip semantic similarity if description is null)
+- [~] T051 [US3] Add semantic similarity logging to EntityResolver at DEBUG level
 
 **Checkpoint**: User Story 3 complete (if needed) - description-based semantic matching works, "The Big Apple" merges with "New York City" based on context
 
@@ -174,12 +174,12 @@
 
 **Purpose**: Ensure <2x processing overhead constraint (SC-004)
 
-- [ ] T052 [P] Implement parallel batch processing in EntityResolver using CompletableFuture for similarity matrix computation
-- [ ] T053 [P] Add early termination heuristics to EntitySimilarityCalculator (length ratio check, first token check)
-- [ ] T054 Add batch size configuration to DeduplicationConfig (default 200)
-- [ ] T055 Add parallel processing configuration to DeduplicationConfig (enabled=true, threads=4)
-- [ ] T056 Implement parallel similarity computation in EntityClusterer.buildSimilarityMatrix
-- [ ] T057 Add performance metrics logging to EntityResolver (processing time, avg time per entity)
+- [x] T052 [P] Implement parallel batch processing in EntityResolver using CompletableFuture for similarity matrix computation
+- [x] T053 [P] Add early termination heuristics to EntitySimilarityCalculator (length ratio check, first token check)
+- [x] T054 Add batch size configuration to DeduplicationConfig (default 200) - ALREADY EXISTS
+- [x] T055 Add parallel processing configuration to DeduplicationConfig (enabled=true, threads=4) - ALREADY EXISTS
+- [x] T056 Implement parallel similarity computation in EntityClusterer.buildSimilarityMatrix
+- [x] T057 Add performance metrics logging to EntityResolver (processing time, avg time per entity)
 
 **Checkpoint**: Performance optimized - processing overhead <2x baseline per SC-004
 

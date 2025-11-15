@@ -8,7 +8,11 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Service for resolving duplicate entities in the knowledge graph.
@@ -63,13 +67,23 @@ public class EntityResolver {
         }
         
         try {
-            logger.info("Resolving duplicates for {} entities (project={}, threshold={})", 
-                       entities.size(), projectId, config.similarity().threshold());
+            Instant overallStart = Instant.now();
+            
+            logger.info("Resolving duplicates for {} entities (project={}, threshold={}, parallel={}, batch={})", 
+                       entities.size(), projectId, config.similarity().threshold(),
+                       config.parallel().enabled(), config.batch().size());
             
             // Step 1: Group entities by type for type-based blocking optimization
+            Instant groupingStart = Instant.now();
             Map<String, List<Entity>> entitiesByType = groupEntitiesByType(entities);
+            long groupingMs = Duration.between(groupingStart, Instant.now()).toMillis();
+            
+            logger.debug("Grouped entities into {} types in {}ms", entitiesByType.size(), groupingMs);
             
             List<Entity> resolvedEntities = new ArrayList<>();
+            long totalSimilarityMs = 0;
+            long totalClusteringMs = 0;
+            long totalMergingMs = 0;
             
             // Step 2: Process each type group independently
             for (Map.Entry<String, List<Entity>> entry : entitiesByType.entrySet()) {
@@ -79,25 +93,43 @@ public class EntityResolver {
                 logger.debug("Processing {} entities of type '{}'", typeEntities.size(), type);
                 
                 // Step 3: Compute pairwise similarity matrix
+                Instant similarityStart = Instant.now();
                 double[][] similarityMatrix = computeSimilarityMatrix(typeEntities);
+                long similarityMs = Duration.between(similarityStart, Instant.now()).toMillis();
+                totalSimilarityMs += similarityMs;
+                
+                logger.debug("Computed {}x{} similarity matrix in {}ms", 
+                            typeEntities.size(), typeEntities.size(), similarityMs);
                 
                 // Step 4: Cluster similar entities
+                Instant clusteringStart = Instant.now();
                 List<Set<Integer>> clusters = clusterer.clusterBySimilarity(
                     typeEntities, similarityMatrix, config.similarity().threshold()
                 );
+                long clusteringMs = Duration.between(clusteringStart, Instant.now()).toMillis();
+                totalClusteringMs += clusteringMs;
                 
-                logger.debug("Found {} clusters for type '{}'", clusters.size(), type);
+                logger.debug("Found {} clusters for type '{}' in {}ms", 
+                            clusters.size(), type, clusteringMs);
                 
                 // Step 5: Merge each cluster into a canonical entity
+                Instant mergingStart = Instant.now();
                 for (Set<Integer> cluster : clusters) {
                     EntityCluster mergedCluster = clusterer.mergeCluster(cluster, typeEntities);
                     resolvedEntities.add(mergedCluster.canonicalEntity());
                 }
+                long mergingMs = Duration.between(mergingStart, Instant.now()).toMillis();
+                totalMergingMs += mergingMs;
             }
             
-            logger.info("Resolution complete: {} entities → {} entities (removed {} duplicates)", 
-                       entities.size(), resolvedEntities.size(), 
-                       entities.size() - resolvedEntities.size());
+            long overallMs = Duration.between(overallStart, Instant.now()).toMillis();
+            int duplicatesRemoved = entities.size() - resolvedEntities.size();
+            double reductionPercent = (duplicatesRemoved * 100.0) / entities.size();
+            
+            logger.info("Resolution complete: {} entities → {} entities (removed {} duplicates, {:.1f}% reduction) in {}ms " +
+                       "[grouping={}ms, similarity={}ms, clustering={}ms, merging={}ms]", 
+                       entities.size(), resolvedEntities.size(), duplicatesRemoved, reductionPercent, overallMs,
+                       groupingMs, totalSimilarityMs, totalClusteringMs, totalMergingMs);
             
             return resolvedEntities;
             
@@ -144,14 +176,22 @@ public class EntityResolver {
         int originalCount = entities.size();
         
         try {
-            logger.info("Resolving duplicates with stats for {} entities (project={}, threshold={})", 
-                       entities.size(), projectId, config.similarity().threshold());
+            logger.info("Resolving duplicates with stats for {} entities (project={}, threshold={}, parallel={}, batch={})", 
+                       entities.size(), projectId, config.similarity().threshold(),
+                       config.parallel().enabled(), config.batch().size());
             
             // Step 1: Group entities by type for type-based blocking optimization
+            Instant groupingStart = Instant.now();
             Map<String, List<Entity>> entitiesByType = groupEntitiesByType(entities);
+            long groupingMs = Duration.between(groupingStart, Instant.now()).toMillis();
+            
+            logger.debug("Grouped entities into {} types in {}ms", entitiesByType.size(), groupingMs);
             
             List<Entity> resolvedEntities = new ArrayList<>();
             int totalClusters = 0;
+            long totalSimilarityMs = 0;
+            long totalClusteringMs = 0;
+            long totalMergingMs = 0;
             
             // Step 2: Process each type group independently
             for (Map.Entry<String, List<Entity>> entry : entitiesByType.entrySet()) {
@@ -161,21 +201,34 @@ public class EntityResolver {
                 logger.debug("Processing {} entities of type '{}'", typeEntities.size(), type);
                 
                 // Step 3: Compute pairwise similarity matrix
+                Instant similarityStart = Instant.now();
                 double[][] similarityMatrix = computeSimilarityMatrix(typeEntities);
+                long similarityMs = Duration.between(similarityStart, Instant.now()).toMillis();
+                totalSimilarityMs += similarityMs;
+                
+                logger.debug("Computed {}x{} similarity matrix in {}ms", 
+                            typeEntities.size(), typeEntities.size(), similarityMs);
                 
                 // Step 4: Cluster similar entities
+                Instant clusteringStart = Instant.now();
                 List<Set<Integer>> clusters = clusterer.clusterBySimilarity(
                     typeEntities, similarityMatrix, config.similarity().threshold()
                 );
+                long clusteringMs = Duration.between(clusteringStart, Instant.now()).toMillis();
+                totalClusteringMs += clusteringMs;
                 
                 totalClusters += clusters.size();
-                logger.debug("Found {} clusters for type '{}'", clusters.size(), type);
+                logger.debug("Found {} clusters for type '{}' in {}ms", 
+                            clusters.size(), type, clusteringMs);
                 
                 // Step 5: Merge each cluster into a canonical entity
+                Instant mergingStart = Instant.now();
                 for (Set<Integer> cluster : clusters) {
                     EntityCluster mergedCluster = clusterer.mergeCluster(cluster, typeEntities);
                     resolvedEntities.add(mergedCluster.canonicalEntity());
                 }
+                long mergingMs = Duration.between(mergingStart, Instant.now()).toMillis();
+                totalMergingMs += mergingMs;
             }
             
             // Calculate statistics
@@ -183,9 +236,12 @@ public class EntityResolver {
             Duration processingTime = Duration.between(startTime, endTime);
             int resolvedCount = resolvedEntities.size();
             int duplicatesRemoved = originalCount - resolvedCount;
+            double reductionPercent = (duplicatesRemoved * 100.0) / originalCount;
             
-            logger.info("Resolution complete: {} entities → {} entities (removed {} duplicates in {}ms)", 
-                       originalCount, resolvedCount, duplicatesRemoved, processingTime.toMillis());
+            logger.info("Resolution complete: {} entities → {} entities (removed {} duplicates, {:.1f}% reduction) in {}ms " +
+                       "[grouping={}ms, similarity={}ms, clustering={}ms, merging={}ms]", 
+                       originalCount, resolvedCount, duplicatesRemoved, reductionPercent, processingTime.toMillis(),
+                       groupingMs, totalSimilarityMs, totalClusteringMs, totalMergingMs);
             
             return new EntityResolutionResult(
                 resolvedEntities,
@@ -229,6 +285,8 @@ public class EntityResolver {
     /**
      * Computes a pairwise similarity matrix for the given entities.
      * Matrix is symmetric: matrix[i][j] = matrix[j][i]
+     * 
+     * Supports parallel processing when enabled in configuration.
      */
     private double[][] computeSimilarityMatrix(List<Entity> entities) {
         int n = entities.size();
@@ -239,7 +297,24 @@ public class EntityResolver {
             matrix[i][i] = 1.0;
         }
         
-        // Compute upper triangle (and mirror to lower triangle)
+        // Use parallel processing if enabled and entity count justifies it
+        boolean useParallel = config.parallel().enabled() && n > config.batch().size();
+        
+        if (useParallel) {
+            computeSimilarityMatrixParallel(entities, matrix);
+        } else {
+            computeSimilarityMatrixSequential(entities, matrix);
+        }
+        
+        return matrix;
+    }
+    
+    /**
+     * Sequential computation of similarity matrix (upper triangle).
+     */
+    private void computeSimilarityMatrixSequential(List<Entity> entities, double[][] matrix) {
+        int n = entities.size();
+        
         for (int i = 0; i < n; i++) {
             for (int j = i + 1; j < n; j++) {
                 EntitySimilarityScore score = calculator.computeSimilarity(
@@ -251,7 +326,61 @@ public class EntityResolver {
                 matrix[j][i] = similarity;  // Symmetric
             }
         }
+    }
+    
+    /**
+     * Parallel computation of similarity matrix using batch processing.
+     * Divides the upper triangle into batches and processes them in parallel.
+     */
+    private void computeSimilarityMatrixParallel(List<Entity> entities, double[][] matrix) {
+        int n = entities.size();
+        int batchSize = config.batch().size();
+        int numThreads = config.parallel().threads();
         
-        return matrix;
+        // Create thread pool
+        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+        
+        try {
+            // Collect all pairs to process (upper triangle)
+            List<int[]> pairs = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    pairs.add(new int[]{i, j});
+                }
+            }
+            
+            // Process pairs in batches
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            
+            for (int start = 0; start < pairs.size(); start += batchSize) {
+                int end = Math.min(start + batchSize, pairs.size());
+                List<int[]> batch = pairs.subList(start, end);
+                
+                CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                    for (int[] pair : batch) {
+                        int i = pair[0];
+                        int j = pair[1];
+                        
+                        EntitySimilarityScore score = calculator.computeSimilarity(
+                            entities.get(i), entities.get(j)
+                        );
+                        
+                        double similarity = score.finalScore();
+                        synchronized (matrix) {
+                            matrix[i][j] = similarity;
+                            matrix[j][i] = similarity;  // Symmetric
+                        }
+                    }
+                }, executor);
+                
+                futures.add(future);
+            }
+            
+            // Wait for all batches to complete
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            
+        } finally {
+            executor.shutdown();
+        }
     }
 }

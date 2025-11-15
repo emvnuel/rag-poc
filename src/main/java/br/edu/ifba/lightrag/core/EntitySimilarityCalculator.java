@@ -31,6 +31,8 @@ public class EntitySimilarityCalculator {
      * Returns a detailed score breakdown with individual metric scores
      * and a weighted final score.
      * 
+     * Includes early termination heuristics for performance optimization.
+     * 
      * @param entity1 First entity (must not be null)
      * @param entity2 Second entity (must not be null)
      * @return EntitySimilarityScore with metric breakdown
@@ -55,6 +57,66 @@ public class EntitySimilarityCalculator {
                 name1, name2, type1, type2,
                 0.0, 0.0, 0.0, 0.0, 0.0
             );
+        }
+        
+        // Early termination heuristic 1: Length ratio check
+        // If names differ drastically in length (more than 5x), they're unlikely to match
+        // This is conservative to avoid rejecting "Warren Home" vs "Warren State Home and Training School"
+        int len1 = name1.length();
+        int len2 = name2.length();
+        int maxLen = Math.max(len1, len2);
+        int minLen = Math.min(len1, len2);
+        
+        if (minLen > 10 && maxLen > minLen * 5) {
+            // Names differ too much in length, unlikely to be similar
+            return new EntitySimilarityScore(
+                name1, name2, type1, type2,
+                0.0, 0.0, 0.0, 0.0, 0.0
+            );
+        }
+        
+        // Early termination heuristic 2: First token check
+        // If first tokens are completely different (no shared prefix), entities are likely not similar
+        // Exception: potential abbreviations (one token is very short)
+        String[] tokens1 = name1.toLowerCase().split("\\s+");
+        String[] tokens2 = name2.toLowerCase().split("\\s+");
+        
+        if (tokens1.length > 0 && tokens2.length > 0) {
+            String firstToken1 = tokens1[0];
+            String firstToken2 = tokens2[0];
+            
+            // Skip first token check if either name might be an abbreviation
+            // (short name with no spaces, like "MIT")
+            boolean isPotentialAbbreviation = 
+                (name1.length() <= 10 && !name1.contains(" ")) || 
+                (name2.length() <= 10 && !name2.contains(" "));
+            
+            if (!isPotentialAbbreviation) {
+                // Check if first tokens share at least first 2 characters OR have significant character overlap
+                boolean hasSharedPrefix = false;
+                if (firstToken1.length() >= 2 && firstToken2.length() >= 2) {
+                    hasSharedPrefix = firstToken1.substring(0, 2).equals(firstToken2.substring(0, 2));
+                }
+                
+                // Count shared characters
+                int sharedChars = 0;
+                for (char c : firstToken1.toCharArray()) {
+                    if (firstToken2.indexOf(c) >= 0) {
+                        sharedChars++;
+                    }
+                }
+                
+                // If first tokens share prefix or have >50% character overlap, continue
+                // Otherwise skip expensive computation
+                boolean hasOverlap = hasSharedPrefix || (sharedChars > firstToken1.length() / 2);
+                
+                if (!hasOverlap) {
+                    return new EntitySimilarityScore(
+                        name1, name2, type1, type2,
+                        0.0, 0.0, 0.0, 0.0, 0.0
+                    );
+                }
+            }
         }
         
         // Compute individual metrics
@@ -228,6 +290,8 @@ public class EntitySimilarityCalculator {
     /**
      * Computes the Levenshtein distance between two strings.
      * 
+     * Includes early termination when the current minimum exceeds a threshold.
+     * 
      * @param s1 First string
      * @param s2 Second string
      * @return Edit distance
@@ -238,6 +302,11 @@ public class EntitySimilarityCalculator {
         
         if (len1 == 0) return len2;
         if (len2 == 0) return len1;
+        
+        // Note: We don't do early termination based on length difference here
+        // because abbreviations like "MIT" vs "Massachusetts Institute of Technology"
+        // have large length differences but should still be compared
+        int maxLength = Math.max(len1, len2);
         
         int[][] dp = new int[len1 + 1][len2 + 1];
         

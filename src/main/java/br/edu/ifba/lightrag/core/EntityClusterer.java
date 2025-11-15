@@ -9,6 +9,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Service for clustering entities based on similarity scores.
@@ -178,7 +181,8 @@ public class EntityClusterer {
      * Builds a similarity matrix for a list of entities.
      * 
      * This is a helper method that uses EntitySimilarityCalculator to
-     * compute all pairwise similarities.
+     * compute all pairwise similarities. Supports parallel processing when
+     * enabled in configuration.
      * 
      * @param entities List of entities (must not be null)
      * @param calculator Similarity calculator (must not be null)
@@ -199,14 +203,36 @@ public class EntityClusterer {
         int n = entities.size();
         double[][] matrix = new double[n][n];
         
-        // Compute pairwise similarities
+        // Initialize diagonal
+        for (int i = 0; i < n; i++) {
+            matrix[i][i] = 1.0;
+        }
+        
+        // Use parallel processing if enabled and entity count justifies it
+        boolean useParallel = config.parallel().enabled() && n > config.batch().size();
+        
+        if (useParallel) {
+            buildSimilarityMatrixParallel(entities, calculator, matrix);
+        } else {
+            buildSimilarityMatrixSequential(entities, calculator, matrix);
+        }
+        
+        return matrix;
+    }
+    
+    /**
+     * Sequential computation of similarity matrix.
+     */
+    private void buildSimilarityMatrixSequential(
+            List<Entity> entities,
+            EntitySimilarityCalculator calculator,
+            double[][] matrix) {
+        
+        int n = entities.size();
+        
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                if (i == j) {
-                    // Diagonal: entity compared to itself
-                    matrix[i][j] = 1.0;
-                } else {
-                    // Off-diagonal: compute similarity
+                if (i != j) {
                     EntitySimilarityScore score = calculator.computeSimilarity(
                         entities.get(i), 
                         entities.get(j)
@@ -215,7 +241,64 @@ public class EntityClusterer {
                 }
             }
         }
+    }
+    
+    /**
+     * Parallel computation of similarity matrix using batch processing.
+     */
+    private void buildSimilarityMatrixParallel(
+            List<Entity> entities,
+            EntitySimilarityCalculator calculator,
+            double[][] matrix) {
         
-        return matrix;
+        int n = entities.size();
+        int batchSize = config.batch().size();
+        int numThreads = config.parallel().threads();
+        
+        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+        
+        try {
+            // Collect all pairs to process (excluding diagonal)
+            List<int[]> pairs = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    if (i != j) {
+                        pairs.add(new int[]{i, j});
+                    }
+                }
+            }
+            
+            // Process pairs in batches
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            
+            for (int start = 0; start < pairs.size(); start += batchSize) {
+                int end = Math.min(start + batchSize, pairs.size());
+                List<int[]> batch = pairs.subList(start, end);
+                
+                CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                    for (int[] pair : batch) {
+                        int i = pair[0];
+                        int j = pair[1];
+                        
+                        EntitySimilarityScore score = calculator.computeSimilarity(
+                            entities.get(i), 
+                            entities.get(j)
+                        );
+                        
+                        synchronized (matrix) {
+                            matrix[i][j] = score.finalScore();
+                        }
+                    }
+                }, executor);
+                
+                futures.add(future);
+            }
+            
+            // Wait for all batches to complete
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            
+        } finally {
+            executor.shutdown();
+        }
     }
 }
