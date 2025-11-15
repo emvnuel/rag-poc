@@ -8,10 +8,15 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Interface for graph storage operations.
+ * Interface for graph storage operations with per-project isolation.
  * Used for storing and querying the knowledge graph of entities and relations.
  * 
- * Implementations: NetworkXStorage, Neo4JStorage, PGGraphStorage, AGEStorage, MemgraphStorage
+ * Each project has its own isolated graph (e.g., graph_<project_uuid>).
+ * All operations require a projectId to route to the correct graph.
+ * 
+ * Implementations: AgeGraphStorage, InMemoryGraphStorage
+ * 
+ * @version 2.0.0 - Updated for project-level graph isolation
  */
 public interface GraphStorage extends AutoCloseable {
     
@@ -21,135 +26,257 @@ public interface GraphStorage extends AutoCloseable {
      */
     CompletableFuture<Void> initialize();
     
+    // ===== Graph Lifecycle Methods =====
+    
     /**
-     * Adds or updates an entity node in the graph.
+     * Creates a new isolated graph for a project.
+     * 
+     * The graph name is derived from the projectId using the convention:
+     * graph_<uuid_prefix> where uuid_prefix is the first 32 chars of the UUID without hyphens.
+     * 
+     * This operation is idempotent - if the graph already exists, it returns successfully.
+     * 
+     * @param projectId the project UUID (must be valid UUID v7 format)
+     * @return a CompletableFuture that completes when the graph is created
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     */
+    CompletableFuture<Void> createProjectGraph(@NotNull String projectId);
+    
+    /**
+     * Deletes a project's graph and all associated data.
+     * 
+     * This operation cascades to remove all entities and relations within the graph.
+     * If the graph doesn't exist, this operation completes successfully (idempotent).
+     * 
+     * @param projectId the project UUID
+     * @return a CompletableFuture that completes when the graph is deleted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     */
+    CompletableFuture<Void> deleteProjectGraph(@NotNull String projectId);
+    
+    /**
+     * Checks if a graph exists for a project.
+     * 
+     * @param projectId the project UUID
+     * @return a CompletableFuture<Boolean> - true if graph exists, false otherwise
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     */
+    CompletableFuture<Boolean> graphExists(@NotNull String projectId);
+    
+    // ===== Entity Operations =====
+    
+    /**
+     * Adds or updates an entity node in the project's graph.
+     * 
+     * Uses MERGE semantics for deduplication within the project.
+     * Entities with the same name in different projects are separate nodes.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param entity the entity to upsert
+     * @return a CompletableFuture that completes when the entity is upserted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Void> upsertEntity(@NotNull Entity entity);
+    CompletableFuture<Void> upsertEntity(@NotNull String projectId, @NotNull Entity entity);
     
     /**
-     * Adds or updates multiple entity nodes in the graph.
+     * Adds or updates multiple entity nodes in the project's graph.
+     * 
+     * Recommended batch size: 1000 entities for optimal performance.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param entities the entities to upsert
+     * @return a CompletableFuture that completes when all entities are upserted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Void> upsertEntities(@NotNull List<Entity> entities);
+    CompletableFuture<Void> upsertEntities(@NotNull String projectId, @NotNull List<Entity> entities);
+    
+    // ===== Relation Operations =====
     
     /**
-     * Adds or updates a relation edge in the graph.
+     * Adds or updates a relation edge in the project's graph.
+     * 
+     * Relations only connect entities within the same project graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param relation the relation to upsert
+     * @return a CompletableFuture that completes when the relation is upserted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Void> upsertRelation(@NotNull Relation relation);
+    CompletableFuture<Void> upsertRelation(@NotNull String projectId, @NotNull Relation relation);
     
     /**
-     * Adds or updates multiple relation edges in the graph.
+     * Adds or updates multiple relation edges in the project's graph.
+     * 
+     * Recommended batch size: 1000 relations for optimal performance.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param relations the relations to upsert
+     * @return a CompletableFuture that completes when all relations are upserted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Void> upsertRelations(@NotNull List<Relation> relations);
+    CompletableFuture<Void> upsertRelations(@NotNull String projectId, @NotNull List<Relation> relations);
+    
+    // ===== Query Operations =====
     
     /**
-     * Gets an entity by its name.
+     * Gets an entity by its name from the project's graph.
+     * 
+     * Only searches within the specified project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param entityName the name of the entity
-     * @return the entity, or null if not found
+     * @return a CompletableFuture<Entity> - the entity, or null if not found
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Entity> getEntity(@NotNull String entityName);
+    CompletableFuture<Entity> getEntity(@NotNull String projectId, @NotNull String entityName);
     
     /**
-     * Gets multiple entities by their names.
+     * Gets multiple entities by their names from the project's graph.
+     * 
+     * Only searches within the specified project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param entityNames the names of the entities
-     * @return a list of found entities
+     * @return a CompletableFuture<List<Entity>> - found entities (may be partial)
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<List<Entity>> getEntities(@NotNull List<String> entityNames);
+    CompletableFuture<List<Entity>> getEntities(@NotNull String projectId, @NotNull List<String> entityNames);
     
     /**
-     * Gets a relation between two entities.
+     * Gets a relation between two entities from the project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param srcId the source entity ID
      * @param tgtId the target entity ID
-     * @return the relation, or null if not found
+     * @return a CompletableFuture<Relation> - the relation, or null if not found
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Relation> getRelation(@NotNull String srcId, @NotNull String tgtId);
+    CompletableFuture<Relation> getRelation(@NotNull String projectId, @NotNull String srcId, @NotNull String tgtId);
     
     /**
-     * Gets all relations for a specific entity.
+     * Gets all relations for a specific entity from the project's graph.
+     * 
+     * Only returns relations within the specified project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param entityName the entity name
-     * @return a list of relations where the entity is either source or target
+     * @return a CompletableFuture<List<Relation>> - relations where entity is source or target
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<List<Relation>> getRelationsForEntity(@NotNull String entityName);
+    CompletableFuture<List<Relation>> getRelationsForEntity(@NotNull String projectId, @NotNull String entityName);
     
     /**
-     * Gets all entities in the graph.
+     * Gets all entities from the project's graph.
+     * 
+     * Only returns entities from the specified project (no cross-project leakage).
      *
-     * @return a list of all entities
+     * @param projectId the project UUID (routes to project's graph)
+     * @return a CompletableFuture<List<Entity>> - all entities in project
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<List<Entity>> getAllEntities();
+    CompletableFuture<List<Entity>> getAllEntities(@NotNull String projectId);
     
     /**
-     * Gets all relations in the graph.
+     * Gets all relations from the project's graph.
+     * 
+     * Only returns relations from the specified project (no cross-project leakage).
      *
-     * @return a list of all relations
+     * @param projectId the project UUID (routes to project's graph)
+     * @return a CompletableFuture<List<Relation>> - all relations in project
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<List<Relation>> getAllRelations();
+    CompletableFuture<List<Relation>> getAllRelations(@NotNull String projectId);
+    
+    // ===== Delete Operations =====
     
     /**
-     * Deletes an entity from the graph.
+     * Deletes an entity from the project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param entityName the name of the entity to delete
-     * @return true if the entity was deleted, false if it didn't exist
+     * @return a CompletableFuture<Boolean> - true if deleted, false if didn't exist
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Boolean> deleteEntity(@NotNull String entityName);
+    CompletableFuture<Boolean> deleteEntity(@NotNull String projectId, @NotNull String entityName);
     
     /**
-     * Deletes a relation from the graph.
+     * Deletes a relation from the project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param srcId the source entity ID
      * @param tgtId the target entity ID
-     * @return true if the relation was deleted, false if it didn't exist
+     * @return a CompletableFuture<Boolean> - true if deleted, false if didn't exist
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Boolean> deleteRelation(@NotNull String srcId, @NotNull String tgtId);
+    CompletableFuture<Boolean> deleteRelation(@NotNull String projectId, @NotNull String srcId, @NotNull String tgtId);
     
     /**
      * Deletes all entities and relations associated with a source document.
+     * 
+     * The sourceId typically corresponds to a document UUID.
+     * This operation is scoped to the project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param sourceId the source document ID
-     * @return the number of entities and relations deleted
+     * @return a CompletableFuture<Integer> - the number of entities and relations deleted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<Integer> deleteBySourceId(@NotNull String sourceId);
+    CompletableFuture<Integer> deleteBySourceId(@NotNull String projectId, @NotNull String sourceId);
+    
+    // ===== Traversal Operations =====
     
     /**
      * Performs a graph traversal query starting from an entity.
+     * 
+     * Traversal is scoped to the project's graph (no cross-project edges).
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param startEntity the entity to start from
      * @param maxDepth the maximum depth to traverse
-     * @return a subgraph containing entities and relations
+     * @return a CompletableFuture<GraphSubgraph> - subgraph containing entities and relations
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<GraphSubgraph> traverse(@NotNull String startEntity, int maxDepth);
+    CompletableFuture<GraphSubgraph> traverse(@NotNull String projectId, @NotNull String startEntity, int maxDepth);
     
     /**
-     * Finds the shortest path between two entities.
+     * Finds the shortest path between two entities within the project's graph.
      *
+     * @param projectId the project UUID (routes to project's graph)
      * @param sourceEntity the source entity
      * @param targetEntity the target entity
-     * @return a list of entities representing the path, or empty if no path exists
+     * @return a CompletableFuture<List<Entity>> - entities in the path, or empty if no path
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<List<Entity>> findShortestPath(@NotNull String sourceEntity, @NotNull String targetEntity);
+    CompletableFuture<List<Entity>> findShortestPath(@NotNull String projectId, @NotNull String sourceEntity, @NotNull String targetEntity);
+    
+    // ===== Statistics Operations =====
     
     /**
-     * Clears all data in the graph.
-     */
-    CompletableFuture<Void> clear();
-    
-    /**
-     * Gets statistics about the graph.
+     * Gets statistics about the project's graph.
+     * 
+     * Statistics are scoped to the specified project only.
      *
-     * @return graph statistics including entity and relation counts
+     * @param projectId the project UUID (routes to project's graph)
+     * @return a CompletableFuture<GraphStats> - statistics including entity/relation counts
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
      */
-    CompletableFuture<GraphStats> getStats();
+    CompletableFuture<GraphStats> getStats(@NotNull String projectId);
     
     /**
      * Closes the storage and releases resources.
