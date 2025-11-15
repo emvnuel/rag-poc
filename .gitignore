@@ -38,6 +38,8 @@ nb-configuration.xml
 
 # Local environment
 .env
+.env.backup
+.env.backup.*
 
 # Plugin directory
 /.quarkus/cli/plugins/
@@ -48,4 +50,14 @@ nb-configuration.xml
 /lightrag-data/chunks.json
 /lightrag-data/llm_cache.json
 /lightrag-storage/
-.env.backup
+
+# Development tools
+.specify/
+.opencode/
+
+# Development logs
+quarkus-dev.log
+quarkus-output.log
+
+# Backup files
+*.bak

@@ -84,12 +84,12 @@ public class MixQueryExecutor extends QueryExecutor {
                         }
                         
                         // Step 4: Expand graph to find related entities (1-hop neighborhood)
-                        return expandGraph(seedEntityIds, 1)
+                        return expandGraph(param.getProjectId(), seedEntityIds, 1)
                             .thenCompose(expandedEntityIds -> {
                                 // Step 5: Get all entities and relations
-                                return graphStorage.getEntities(expandedEntityIds)
+                                return graphStorage.getEntities(param.getProjectId(), expandedEntityIds)
                                     .thenCompose(entities -> 
-                                        getAllRelations(expandedEntityIds)
+                                        getAllRelations(param.getProjectId(), expandedEntityIds)
                                             .thenApply(relations -> {
                                                 // Convert entity results to source chunks
                                                 List<LightRAGQueryResult.SourceChunk> entitySources = new ArrayList<>();
@@ -191,13 +191,15 @@ public class MixQueryExecutor extends QueryExecutor {
     }
     
     /**
-     * Expands the graph by traversing N hops from seed entities.
-     *
+     * Expands graph from seed entities using N-hop traversal.
+     * 
+     * @param projectId The project ID for graph isolation
      * @param seedEntityIds Initial entity IDs
      * @param hops Number of hops to expand
      * @return All entity IDs within N hops
      */
     private CompletableFuture<List<String>> expandGraph(
+        @NotNull String projectId,
         @NotNull List<String> seedEntityIds,
         int hops
     ) {
@@ -209,7 +211,7 @@ public class MixQueryExecutor extends QueryExecutor {
         Set<String> currentLevel = new HashSet<>(seedEntityIds);
         
         // Recursive expansion
-        return expandGraphLevel(currentLevel, visited, hops)
+        return expandGraphLevel(projectId, currentLevel, visited, hops)
             .thenApply(finalVisited -> new ArrayList<>(finalVisited));
     }
     
@@ -217,6 +219,7 @@ public class MixQueryExecutor extends QueryExecutor {
      * Recursively expands graph level by level.
      */
     private CompletableFuture<Set<String>> expandGraphLevel(
+        @NotNull String projectId,
         @NotNull Set<String> currentLevel,
         @NotNull Set<String> visited,
         int remainingHops
@@ -227,7 +230,7 @@ public class MixQueryExecutor extends QueryExecutor {
         
         // Get all relations for current level entities
         List<CompletableFuture<List<Relation>>> futures = currentLevel.stream()
-            .map(graphStorage::getRelationsForEntity)
+            .map(entityId -> graphStorage.getRelationsForEntity(projectId, entityId))
             .toList();
         
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -251,20 +254,20 @@ public class MixQueryExecutor extends QueryExecutor {
                 }
                 
                 // Recursively expand next level
-                return expandGraphLevel(nextLevel, visited, remainingHops - 1);
+                return expandGraphLevel(projectId, nextLevel, visited, remainingHops - 1);
             });
     }
     
     /**
      * Gets all relations between a set of entities.
      */
-    private CompletableFuture<List<Relation>> getAllRelations(@NotNull List<String> entityIds) {
+    private CompletableFuture<List<Relation>> getAllRelations(@NotNull String projectId, @NotNull List<String> entityIds) {
         if (entityIds.isEmpty()) {
             return CompletableFuture.completedFuture(List.of());
         }
         
         List<CompletableFuture<List<Relation>>> futures = entityIds.stream()
-            .map(graphStorage::getRelationsForEntity)
+            .map(entityId -> graphStorage.getRelationsForEntity(projectId, entityId))
             .toList();
         
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))

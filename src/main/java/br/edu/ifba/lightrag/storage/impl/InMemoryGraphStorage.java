@@ -48,27 +48,27 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<Void> upsertEntity(@NotNull Entity entity) {
+    public CompletableFuture<Void> upsertEntity(@NotNull String projectId, @NotNull Entity entity) {
         ensureInitialized();
         return CompletableFuture.runAsync(() -> {
             entities.put(entity.getEntityName(), entity);
-            logger.debug("Upserted entity: {}", entity.getEntityName());
+            logger.debug("Upserted entity: {} for project: {}", entity.getEntityName(), projectId);
         });
     }
     
     @Override
-    public CompletableFuture<Void> upsertEntities(@NotNull List<Entity> entityList) {
+    public CompletableFuture<Void> upsertEntities(@NotNull String projectId, @NotNull List<Entity> entityList) {
         ensureInitialized();
         return CompletableFuture.runAsync(() -> {
             for (Entity entity : entityList) {
                 entities.put(entity.getEntityName(), entity);
             }
-            logger.debug("Upserted {} entities", entityList.size());
+            logger.debug("Upserted {} entities for project: {}", entityList.size(), projectId);
         });
     }
     
     @Override
-    public CompletableFuture<Void> upsertRelation(@NotNull Relation relation) {
+    public CompletableFuture<Void> upsertRelation(@NotNull String projectId, @NotNull Relation relation) {
         ensureInitialized();
         return CompletableFuture.runAsync(() -> {
             String srcId = relation.getSrcId();
@@ -82,12 +82,12 @@ public class InMemoryGraphStorage implements GraphStorage {
             incomingEdges.computeIfAbsent(tgtId, k -> new ConcurrentHashMap<>())
                 .put(srcId, relation);
             
-            logger.debug("Upserted relation: {} -> {}", srcId, tgtId);
+            logger.debug("Upserted relation: {} -> {} for project: {}", srcId, tgtId, projectId);
         });
     }
     
     @Override
-    public CompletableFuture<Void> upsertRelations(@NotNull List<Relation> relations) {
+    public CompletableFuture<Void> upsertRelations(@NotNull String projectId, @NotNull List<Relation> relations) {
         ensureInitialized();
         return CompletableFuture.runAsync(() -> {
             for (Relation relation : relations) {
@@ -100,18 +100,18 @@ public class InMemoryGraphStorage implements GraphStorage {
                 incomingEdges.computeIfAbsent(tgtId, k -> new ConcurrentHashMap<>())
                     .put(srcId, relation);
             }
-            logger.debug("Upserted {} relations", relations.size());
+            logger.debug("Upserted {} relations for project: {}", relations.size(), projectId);
         });
     }
     
     @Override
-    public CompletableFuture<Entity> getEntity(@NotNull String entityName) {
+    public CompletableFuture<Entity> getEntity(@NotNull String projectId, @NotNull String entityName) {
         ensureInitialized();
         return CompletableFuture.completedFuture(entities.get(entityName));
     }
     
     @Override
-    public CompletableFuture<List<Entity>> getEntities(@NotNull List<String> entityNames) {
+    public CompletableFuture<List<Entity>> getEntities(@NotNull String projectId, @NotNull List<String> entityNames) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             List<Entity> result = new ArrayList<>();
@@ -126,7 +126,7 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<Relation> getRelation(@NotNull String srcId, @NotNull String tgtId) {
+    public CompletableFuture<Relation> getRelation(@NotNull String projectId, @NotNull String srcId, @NotNull String tgtId) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             ConcurrentHashMap<String, Relation> targets = outgoingEdges.get(srcId);
@@ -138,7 +138,7 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<List<Relation>> getRelationsForEntity(@NotNull String entityName) {
+    public CompletableFuture<List<Relation>> getRelationsForEntity(@NotNull String projectId, @NotNull String entityName) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             Set<Relation> relations = new HashSet<>();
@@ -160,13 +160,13 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<List<Entity>> getAllEntities() {
+    public CompletableFuture<List<Entity>> getAllEntities(@NotNull String projectId) {
         ensureInitialized();
         return CompletableFuture.completedFuture(new ArrayList<>(entities.values()));
     }
     
     @Override
-    public CompletableFuture<List<Relation>> getAllRelations() {
+    public CompletableFuture<List<Relation>> getAllRelations(@NotNull String projectId) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             Set<Relation> allRelations = new HashSet<>();
@@ -178,7 +178,7 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<Boolean> deleteEntity(@NotNull String entityName) {
+    public CompletableFuture<Boolean> deleteEntity(@NotNull String projectId, @NotNull String entityName) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             boolean existed = entities.remove(entityName) != null;
@@ -196,14 +196,14 @@ public class InMemoryGraphStorage implements GraphStorage {
             }
             
             if (existed) {
-                logger.debug("Deleted entity: {}", entityName);
+                logger.debug("Deleted entity: {} for project: {}", entityName, projectId);
             }
             return existed;
         });
     }
     
     @Override
-    public CompletableFuture<Boolean> deleteRelation(@NotNull String srcId, @NotNull String tgtId) {
+    public CompletableFuture<Boolean> deleteRelation(@NotNull String projectId, @NotNull String srcId, @NotNull String tgtId) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             boolean existed = false;
@@ -219,14 +219,14 @@ public class InMemoryGraphStorage implements GraphStorage {
             }
             
             if (existed) {
-                logger.debug("Deleted relation: {} -> {}", srcId, tgtId);
+                logger.debug("Deleted relation: {} -> {} for project: {}", srcId, tgtId, projectId);
             }
             return existed;
         });
     }
     
     @Override
-    public CompletableFuture<Integer> deleteBySourceId(@NotNull String sourceId) {
+    public CompletableFuture<Integer> deleteBySourceId(@NotNull String projectId, @NotNull String sourceId) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             int count = 0;
@@ -238,7 +238,7 @@ public class InMemoryGraphStorage implements GraphStorage {
                 .toList();
             
             for (String entityName : entitiesToDelete) {
-                deleteEntity(entityName).join();
+                deleteEntity(projectId, entityName).join();
                 count++;
             }
             
@@ -253,17 +253,17 @@ public class InMemoryGraphStorage implements GraphStorage {
             }
             
             for (Relation relation : relationsToDelete) {
-                deleteRelation(relation.getSrcId(), relation.getTgtId()).join();
+                deleteRelation(projectId, relation.getSrcId(), relation.getTgtId()).join();
                 count++;
             }
             
-            logger.debug("Deleted {} items for source ID: {}", count, sourceId);
+            logger.debug("Deleted {} items for source ID: {} in project: {}", count, sourceId, projectId);
             return count;
         });
     }
     
     @Override
-    public CompletableFuture<GraphSubgraph> traverse(@NotNull String startEntity, int maxDepth) {
+    public CompletableFuture<GraphSubgraph> traverse(@NotNull String projectId, @NotNull String startEntity, int maxDepth) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             Set<String> visitedEntities = new HashSet<>();
@@ -331,7 +331,7 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<List<Entity>> findShortestPath(@NotNull String sourceEntity, @NotNull String targetEntity) {
+    public CompletableFuture<List<Entity>> findShortestPath(@NotNull String projectId, @NotNull String sourceEntity, @NotNull String targetEntity) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             if (!entities.containsKey(sourceEntity) || !entities.containsKey(targetEntity)) {
@@ -394,18 +394,33 @@ public class InMemoryGraphStorage implements GraphStorage {
     }
     
     @Override
-    public CompletableFuture<Void> clear() {
+    public CompletableFuture<Void> createProjectGraph(@NotNull String projectId) {
+        // In-memory implementation: single shared graph for all projects
+        // This is a test/stub implementation - projectId is ignored
+        ensureInitialized();
+        return CompletableFuture.completedFuture(null);
+    }
+    
+    @Override
+    public CompletableFuture<Void> deleteProjectGraph(@NotNull String projectId) {
+        // In-memory implementation: clear all data (no per-project isolation in memory)
         ensureInitialized();
         return CompletableFuture.runAsync(() -> {
             entities.clear();
             outgoingEdges.clear();
             incomingEdges.clear();
-            logger.info("Cleared all graph data");
+            logger.info("Cleared graph data for project: {}", projectId);
         });
     }
     
     @Override
-    public CompletableFuture<GraphStats> getStats() {
+    public CompletableFuture<Boolean> graphExists(@NotNull String projectId) {
+        // In-memory implementation: always returns true if initialized
+        return CompletableFuture.completedFuture(initialized);
+    }
+    
+    @Override
+    public CompletableFuture<GraphStats> getStats(@NotNull String projectId) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             long entityCount = entities.size();
