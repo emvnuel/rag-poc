@@ -1,0 +1,3 @@
+Apple Inc. uses machine learning for product recommendations.
+OpenAI provides APIs for developers to integrate AI.
+Tesla applies ML for autonomous driving systems.
