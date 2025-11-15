@@ -1,6 +1,6 @@
 # Feature Specification: Semantic Entity Deduplication
 
-**Feature Branch**: `001-semantic-entity-dedup`  
+**Feature Branch**: `002-semantic-entity-dedup`  
 **Created**: 2025-11-15  
 **Status**: Draft  
 **Input**: User description: "Improve the LightRAG entity deduplication strategy to be more semantic"

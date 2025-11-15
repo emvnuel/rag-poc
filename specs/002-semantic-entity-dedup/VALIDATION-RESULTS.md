@@ -1,6 +1,6 @@
 # Validation Results: Semantic Entity Deduplication
 
-**Feature ID**: 001-semantic-entity-dedup  
+**Feature ID**: 002-semantic-entity-dedup  
 **Validation Date**: 2025-11-15  
 **Validator**: OpenCode AI Agent  
 **Status**: ✅ ALL TESTS PASSING

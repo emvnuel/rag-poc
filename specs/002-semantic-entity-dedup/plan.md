@@ -1,7 +1,7 @@
 # Implementation Plan: Semantic Entity Deduplication
 
-**Branch**: `001-semantic-entity-dedup` | **Date**: 2025-11-15 | **Spec**: [spec.md](./spec.md)  
-**Input**: Feature specification from `/specs/001-semantic-entity-dedup/spec.md`
+**Branch**: `002-semantic-entity-dedup` | **Date**: 2025-11-15 | **Spec**: [spec.md](./spec.md)  
+**Input**: Feature specification from `/specs/002-semantic-entity-dedup/spec.md`
 
 ## Summary
 
@@ -57,7 +57,7 @@ Implement a semantic entity deduplication system that reduces duplicate entity n
 ### Documentation (this feature)
 
 ```text
-specs/001-semantic-entity-dedup/
+specs/002-semantic-entity-dedup/
 ├── plan.md              # This file (/speckit.plan command output)
 ├── spec.md              # Feature specification (already created)
 ├── checklists/
@@ -142,7 +142,7 @@ Based on Technical Context unknowns and spec requirements, the following researc
 
 ### Research Output Location
 
-**File**: `specs/001-semantic-entity-dedup/research.md`
+**File**: `specs/002-semantic-entity-dedup/research.md`
 
 All research findings will be consolidated in this file following the format:
 - **Decision**: [What was chosen]

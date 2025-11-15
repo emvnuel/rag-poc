@@ -1,6 +1,6 @@
 # Tasks: Semantic Entity Deduplication
 
-**Input**: Design documents from `/specs/001-semantic-entity-dedup/`  
+**Input**: Design documents from `/specs/002-semantic-entity-dedup/`  
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅, quickstart.md ✅
 
 **Tests**: Tests are included as this project follows TDD principles per the constitution.
@@ -26,7 +26,7 @@
 
 **Purpose**: Project initialization and configuration for entity resolution feature
 
-- [x] T001 Create feature branch `001-semantic-entity-dedup` from main
+- [x] T001 Create feature branch `002-semantic-entity-dedup` from main
 - [x] T002 [P] Add entity resolution configuration schema to src/main/resources/application.properties
 - [x] T003 [P] Create test data files from dupes.md examples in test-data/entity-resolution/
 
@@ -214,7 +214,7 @@
 - [ ] T071 Validate quickstart.md configuration examples work
 - [ ] T072 Code cleanup and refactoring for code quality standards
 - [ ] T073 Update AGENTS.md with entity resolution context
-- [ ] T074 Create FEATURE-COMPLETE.md milestone document in specs/001-semantic-entity-dedup/
+- [ ] T074 Create FEATURE-COMPLETE.md milestone document in specs/002-semantic-entity-dedup/
 
 **Checkpoint**: Feature complete and production-ready
 

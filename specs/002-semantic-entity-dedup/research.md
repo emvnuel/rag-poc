@@ -1,6 +1,6 @@
 # Research Findings: Semantic Entity Deduplication
 
-**Branch**: `001-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 0 - Research  
+**Branch**: `002-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 0 - Research  
 **Input**: Technical Context from `dupes.md`, `spec.md`, and `plan.md`
 
 ## Summary
@@ -508,8 +508,8 @@ private CompletableFuture<Void> storeKnowledgeGraph(
 ## References
 
 - **Primary Reference**: `dupes.md` (detailed implementation guidance)
-- **Specification**: `specs/001-semantic-entity-dedup/spec.md`
-- **Implementation Plan**: `specs/001-semantic-entity-dedup/plan.md`
+- **Specification**: `specs/002-semantic-entity-dedup/spec.md`
+- **Implementation Plan**: `specs/002-semantic-entity-dedup/plan.md`
 - **Algorithm Papers**:
   - Levenshtein Distance: Original paper (1966)
   - Jaccard Similarity: "On the Generalized Distance in Statistics" (1901)

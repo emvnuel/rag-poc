@@ -1,6 +1,6 @@
 # Feature Complete: Semantic Entity Deduplication - Phase 3 MVP
 
-**Feature ID**: 001-semantic-entity-dedup  
+**Feature ID**: 002-semantic-entity-dedup  
 **Phase**: Phase 3 - User Story 1 (Basic Semantic Matching)  
 **Status**: ✅ COMPLETE  
 **Completion Date**: 2025-11-15  

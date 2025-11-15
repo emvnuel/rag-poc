@@ -1,6 +1,6 @@
 # Quickstart Guide: Semantic Entity Deduplication
 
-**Branch**: `001-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 1 - Design  
+**Branch**: `002-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 1 - Design  
 **Audience**: Developers and users configuring the entity resolution feature
 
 ## Summary
@@ -518,11 +518,11 @@ lightrag.entity.resolution.batch.size=100
 
 ## Additional Resources
 
-- **Specification**: `specs/001-semantic-entity-dedup/spec.md`
-- **Data Model**: `specs/001-semantic-entity-dedup/data-model.md`
-- **API Contracts**: `specs/001-semantic-entity-dedup/contracts/EntityResolver.interface.md`
-- **Research Findings**: `specs/001-semantic-entity-dedup/research.md`
-- **Implementation Plan**: `specs/001-semantic-entity-dedup/plan.md`
+- **Specification**: `specs/002-semantic-entity-dedup/spec.md`
+- **Data Model**: `specs/002-semantic-entity-dedup/data-model.md`
+- **API Contracts**: `specs/002-semantic-entity-dedup/contracts/EntityResolver.interface.md`
+- **Research Findings**: `specs/002-semantic-entity-dedup/research.md`
+- **Implementation Plan**: `specs/002-semantic-entity-dedup/plan.md`
 
 ---
 

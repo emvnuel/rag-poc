@@ -1,6 +1,6 @@
 # API Contracts: Entity Resolver
 
-**Branch**: `001-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 1 - Design  
+**Branch**: `002-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 1 - Design  
 **Input**: Research findings and data model from Phase 0 and Phase 1 documents
 
 ## Summary
@@ -646,7 +646,7 @@ public class EntityResolverTest {
 
 ## References
 
-- **Data Model**: `specs/001-semantic-entity-dedup/data-model.md`
-- **Research Findings**: `specs/001-semantic-entity-dedup/research.md`
-- **Specification**: `specs/001-semantic-entity-dedup/spec.md`
+- **Data Model**: `specs/002-semantic-entity-dedup/data-model.md`
+- **Research Findings**: `specs/002-semantic-entity-dedup/research.md`
+- **Specification**: `specs/002-semantic-entity-dedup/spec.md`
 - **Jakarta EE Standards**: https://jakarta.ee/specifications/

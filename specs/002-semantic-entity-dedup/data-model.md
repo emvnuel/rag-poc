@@ -1,6 +1,6 @@
 # Data Model: Semantic Entity Deduplication
 
-**Branch**: `001-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 1 - Design  
+**Branch**: `002-semantic-entity-dedup` | **Date**: 2025-11-15 | **Phase**: 1 - Design  
 **Input**: Research findings from `research.md` and requirements from `spec.md`
 
 ## Summary
@@ -682,7 +682,7 @@ CompletableFuture.supplyAsync(() -> processScore(score));
 
 ## References
 
-- **Research Findings**: `specs/001-semantic-entity-dedup/research.md`
-- **Specification**: `specs/001-semantic-entity-dedup/spec.md`
-- **Implementation Plan**: `specs/001-semantic-entity-dedup/plan.md`
+- **Research Findings**: `specs/002-semantic-entity-dedup/research.md`
+- **Specification**: `specs/002-semantic-entity-dedup/spec.md`
+- **Implementation Plan**: `specs/002-semantic-entity-dedup/plan.md`
 - **Existing Entity Class**: `src/main/java/br/edu/ifba/lightrag/core/Entity.java`
