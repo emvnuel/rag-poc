@@ -95,7 +95,7 @@ public class ChatService {
         // This handles cases where the LLM invents citations despite instructions not to
         String processedContent = assistantMessage.content();
         boolean hasAnyCitableSources = sources.stream()
-            .anyMatch(source -> source.id() != null);
+            .anyMatch(source -> source.documentId() != null);
         
         if (!hasAnyCitableSources) {
             // Remove all bracketed citations (e.g., [UUID], [e2cd5fc7-...], [sem-uuid-fornecido], [RAG-contexto-001], [Contexto], etc.)
@@ -131,11 +131,11 @@ public class ChatService {
         for (int i = 0; i < sources.size(); i++) {
             final SearchResult source = sources.get(i);
             // Check if first source is LightRAG synthesized answer
-            if (i == 0 && source.id() == null && "LightRAG Answer".equals(source.source())) {
+            if (i == 0 && source.documentId() == null && "LightRAG Answer".equals(source.source())) {
                 hasLightRAGAnswer = true;
                 continue;
             }
-            if (source.id() != null) {
+            if (source.documentId() != null) {
                 citableSources++;
             }
         }
@@ -193,32 +193,27 @@ public class ChatService {
         context.append("Se não houver ID listado para uma informação, NÃO cite.\n\n");
         context.append(String.format("Fontes disponíveis (%d documento(s)):\n\n", citableSources));
 
-        // Format sources with UUID citations
+        // Format sources with chunk ID citations
         // Note: All sources (except index 0 "LightRAG Answer") are guaranteed to have document IDs
         // because SearchService filters out sources without document IDs
         for (int i = 0; i < sources.size(); i++) {
             final SearchResult source = sources.get(i);
             
             // First source is usually the LightRAG synthesized answer - include it as helpful context
-            if (i == 0 && source.id() == null && "LightRAG Answer".equals(source.source())) {
+            if (i == 0 && source.documentId() == null && "LightRAG Answer".equals(source.source())) {
                 context.append("=== RESPOSTA SINTETIZADA (use como referência) ===\n");
                 context.append(source.chunkText());
                 context.append("\n\n=== DOCUMENTOS ORIGINAIS ===\n\n");
                 continue;
             }
             
-            // Add source with UUID:chunk citation
+            // Add source with chunk ID citation
             // All sources here should have document IDs due to filtering in SearchService
-            if (source.id() != null) {
-                // Format citation ID with chunk number for unique identification
-                if (source.chunkIndex() != null) {
-                    context.append(String.format("[%s:chunk-%d] ", source.id(), source.chunkIndex()));
-                } else {
-                    // Fallback for sources without chunk index
-                    context.append(String.format("[%s] ", source.id()));
-                }
+            if (source.documentId() != null) {
+                // Format citation with chunk ID for unique identification
+                context.append(String.format("[%s] ", source.id()));
                 
-                context.append(String.format("(Documento: %s", source.id()));
+                context.append(String.format("(Documento: %s", source.documentId()));
                 if (source.chunkIndex() != null) {
                     context.append(String.format(", Trecho %d", source.chunkIndex()));
                 }

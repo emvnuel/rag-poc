@@ -64,7 +64,7 @@ class ChatServiceTest {
             new ChatMessage("assistant", responseText)
         );
         final List<SearchResult> sources = List.of(
-            new SearchResult(UUID.randomUUID(), "chunk text", 0, "file.txt", 0.85)
+            new SearchResult("chunk_123", UUID.randomUUID(), "chunk text", 0, "file.txt", 0.85)
         );
         
         final ChatResponse response = new ChatResponse(
