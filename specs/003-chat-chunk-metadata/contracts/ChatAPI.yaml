@@ -1,0 +1,313 @@
+openapi: 3.0.3
+info:
+  title: Chat API - Chunk Metadata Enhancement
+  description: |
+    Chat completion endpoint with enhanced source metadata.
+    
+    This contract defines the chat endpoint response structure, highlighting the chunk metadata
+    fields (`id`, `chunkIndex`) required for source traceability and citation verification.
+  version: 1.0.0
+  contact:
+    name: RAG SaaS API Support
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+paths:
+  /chat:
+    post:
+      summary: Send a chat message and receive AI-generated response
+      description: |
+        Sends a user message to the RAG system and receives an AI-generated response
+        with source attribution. Each source includes document ID and chunk index
+        for traceability.
+      operationId: chat
+      tags:
+        - Chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            example:
+              projectId: "a1b2c3d4-5678-9abc-def0-123456789abc"
+              message: "What is machine learning?"
+              history: []
+      responses:
+        '200':
+          description: Successful response with AI-generated answer and sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                withDocumentSources:
+                  summary: Response with document sources
+                  description: Typical response with chunks from uploaded documents
+                  value:
+                    response: "Machine learning is a subset of artificial intelligence that focuses on enabling computers to learn from data."
+                    messages:
+                      - role: "user"
+                        content: "What is machine learning?"
+                      - role: "assistant"
+                        content: "Machine learning is a subset of artificial intelligence..."
+                    sources:
+                      - id: "a1b2c3d4-5678-9abc-def0-123456789abc"
+                        chunkText: "Machine learning is a subset of artificial intelligence that focuses on enabling computers to learn from data without being explicitly programmed."
+                        chunkIndex: 5
+                        source: "ai-research.pdf"
+                        distance: 0.85
+                      - id: "e5f6a7b8-9012-3cde-f456-789012345678"
+                        chunkText: "Neural networks are a key component of modern ML systems, inspired by the structure of biological neural networks."
+                        chunkIndex: 12
+                        source: "ml-fundamentals.pdf"
+                        distance: 0.78
+                    model: "gpt-4"
+                    totalDuration: 1234
+                    promptEvalCount: 150
+                    evalCount: 75
+                
+                withSynthesizedAnswer:
+                  summary: Response with synthesized answer
+                  description: Response including a LightRAG synthesized answer (null IDs)
+                  value:
+                    response: "Based on the knowledge graph, machine learning encompasses supervised, unsupervised, and reinforcement learning paradigms."
+                    messages:
+                      - role: "user"
+                        content: "What are the types of machine learning?"
+                      - role: "assistant"
+                        content: "Based on the knowledge graph, machine learning encompasses..."
+                    sources:
+                      - id: null
+                        chunkText: "Based on entities: Machine Learning, Supervised Learning, Unsupervised Learning, Reinforcement Learning. These are the primary paradigms in the field."
+                        chunkIndex: null
+                        source: "LightRAG Answer"
+                        distance: null
+                      - id: "a1b2c3d4-5678-9abc-def0-123456789abc"
+                        chunkText: "Supervised learning uses labeled training data..."
+                        chunkIndex: 3
+                        source: "ml-basics.pdf"
+                        distance: 0.82
+                    model: "gpt-4"
+                    totalDuration: 1456
+                    promptEvalCount: 180
+                    evalCount: 92
+                
+                noSources:
+                  summary: Response with no sources
+                  description: Response when no relevant documents are found
+                  value:
+                    response: "I don't have information about that in the available documents. Please upload relevant documents to your project."
+                    messages:
+                      - role: "user"
+                        content: "What is quantum computing?"
+                      - role: "assistant"
+                        content: "I don't have information about that..."
+                    sources: []
+                    model: "gpt-4"
+                    totalDuration: 523
+                    promptEvalCount: 50
+                    evalCount: 25
+        
+        '400':
+          description: Invalid request (missing required fields, invalid UUID, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "VALIDATION_ERROR"
+                message: "Project ID is required and must be a valid UUID"
+                field: "projectId"
+                timestamp: "2025-11-15T10:30:00Z"
+        
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "NOT_FOUND"
+                message: "Project with ID a1b2c3d4-5678-9abc-def0-123456789abc not found"
+                field: "projectId"
+                timestamp: "2025-11-15T10:30:00Z"
+        
+        '500':
+          description: Internal server error (LLM service unavailable, database error, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "INTERNAL_ERROR"
+                message: "Failed to generate response: LLM service timeout"
+                timestamp: "2025-11-15T10:30:00Z"
+
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - projectId
+        - message
+      properties:
+        projectId:
+          type: string
+          format: uuid
+          description: UUID of the project containing the documents to query
+          example: "a1b2c3d4-5678-9abc-def0-123456789abc"
+        message:
+          type: string
+          minLength: 1
+          description: User's chat message/question
+          example: "What is machine learning?"
+        history:
+          type: array
+          description: Optional conversation history for context
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          default: []
+    
+    ChatResponse:
+      type: object
+      required:
+        - response
+        - messages
+        - sources
+        - model
+      properties:
+        response:
+          type: string
+          description: AI-generated response text
+          example: "Machine learning is a subset of artificial intelligence..."
+        messages:
+          type: array
+          description: Complete conversation history including current exchange
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        sources:
+          type: array
+          description: |
+            **KEY FEATURE**: Source chunks used to generate the response.
+            Each source includes `id` (document UUID) and `chunkIndex` for traceability.
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        model:
+          type: string
+          description: LLM model identifier used for generation
+          example: "gpt-4"
+        totalDuration:
+          type: integer
+          format: int64
+          nullable: true
+          description: Total processing time in milliseconds
+          example: 1234
+        promptEvalCount:
+          type: integer
+          format: int64
+          nullable: true
+          description: Number of tokens in the prompt
+          example: 150
+        evalCount:
+          type: integer
+          format: int64
+          nullable: true
+          description: Number of tokens in the completion
+          example: 75
+    
+    ChatMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system]
+          description: Message sender role
+          example: "user"
+        content:
+          type: string
+          description: Message text content
+          example: "What is machine learning?"
+    
+    SearchResult:
+      type: object
+      required:
+        - chunkText
+        - source
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            **FEATURE FIELD**: Document identifier (UUID) of the source document.
+            - Non-null: Direct document chunk (citable source)
+            - Null: Synthesized answer from knowledge graph (not directly citable)
+          example: "a1b2c3d4-5678-9abc-def0-123456789abc"
+        chunkText:
+          type: string
+          description: Text content of the chunk
+          example: "Machine learning is a subset of artificial intelligence..."
+        chunkIndex:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: |
+            **FEATURE FIELD**: Position of the chunk within the source document (0-based).
+            - Non-null: Chunked document with sequential chunk numbering
+            - Null: Synthesized answer or non-chunked source
+            
+            Combined with `id`, this enables precise citations like [UUID:chunk-5].
+          example: 5
+        source:
+          type: string
+          description: |
+            Human-readable source label.
+            - Document chunks: filename (e.g., "document.pdf")
+            - Synthesized answers: "LightRAG Answer"
+          example: "ai-research.pdf"
+        distance:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0.0
+          maximum: 1.0
+          description: |
+            Vector similarity score (0.0 = identical, 1.0 = dissimilar).
+            Null for synthesized answers.
+          example: 0.85
+    
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Error code
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Project ID is required and must be a valid UUID"
+        field:
+          type: string
+          nullable: true
+          description: Field name that caused the error (for validation errors)
+          example: "projectId"
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp in ISO 8601 format
+          example: "2025-11-15T10:30:00Z"
+
+tags:
+  - name: Chat
+    description: Chat completion with RAG-based context retrieval
