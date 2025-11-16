@@ -107,16 +107,29 @@ if [ "$SOURCES_COUNT" -gt 0 ]; then
   echo "  First source:"
   echo "$FIRST_SOURCE" | jq '.'
   
-  # Validate id field exists (can be null or UUID)
+  # Validate id field exists (chunk ID)
   if echo "$FIRST_SOURCE" | jq -e 'has("id")' > /dev/null 2>&1; then
     ID_VALUE=$(echo "$FIRST_SOURCE" | jq -r '.id')
     if [ "$ID_VALUE" = "null" ]; then
       echo -e "${GREEN}✓ id field present (null - synthesized answer)${NC}"
     else
-      echo -e "${GREEN}✓ id field present (UUID: $ID_VALUE)${NC}"
+      echo -e "${GREEN}✓ id field present (chunk ID: $ID_VALUE)${NC}"
     fi
   else
     echo -e "${RED}✗ id field missing${NC}"
+    exit 1
+  fi
+  
+  # Validate documentId field exists (can be null or UUID)
+  if echo "$FIRST_SOURCE" | jq -e 'has("documentId")' > /dev/null 2>&1; then
+    DOC_ID_VALUE=$(echo "$FIRST_SOURCE" | jq -r '.documentId')
+    if [ "$DOC_ID_VALUE" = "null" ]; then
+      echo -e "${GREEN}✓ documentId field present (null - synthesized answer)${NC}"
+    else
+      echo -e "${GREEN}✓ documentId field present (UUID: $DOC_ID_VALUE)${NC}"
+    fi
+  else
+    echo -e "${RED}✗ documentId field missing${NC}"
     exit 1
   fi
   
@@ -160,7 +173,8 @@ echo "================================"
 echo ""
 echo "Summary:"
 echo "  - Chat API returns sources array with metadata"
-echo "  - Each source includes 'id' field (UUID or null)"
+echo "  - Each source includes 'id' field (chunk ID or null)"
+echo "  - Each source includes 'documentId' field (UUID or null)"
 echo "  - Each source includes 'chunkIndex' field (integer or null)"
 echo "  - Response structure matches specification"
 echo ""

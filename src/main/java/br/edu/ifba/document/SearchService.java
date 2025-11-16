@@ -57,6 +57,7 @@ public class SearchService {
             
             // First result: The synthesized answer with citations
             results.add(new SearchResult(
+                    null,                       // No chunk ID for the answer
                     null,                       // No specific document ID for the answer
                     queryResult.answer(),       // The synthesized answer with [1], [2] citations
                     null,                       // No chunk index
@@ -126,6 +127,7 @@ public class SearchService {
                 
                 sourceCount++;
                 results.add(new SearchResult(
+                        source.chunkId(),                                // Chunk ID
                         documentUuid,                                    // Document UUID
                         source.content(),                                // Chunk content
                         source.chunkIndex(),                             // Chunk index

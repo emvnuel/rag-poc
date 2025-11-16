@@ -5,7 +5,7 @@ info:
     Chat completion endpoint with enhanced source metadata.
     
     This contract defines the chat endpoint response structure, highlighting the chunk metadata
-    fields (`id`, `chunkIndex`) required for source traceability and citation verification.
+    fields (`id`, `documentId`, `chunkIndex`) required for source traceability and citation verification.
   version: 1.0.0
   contact:
     name: RAG SaaS API Support
@@ -20,7 +20,7 @@ paths:
       summary: Send a chat message and receive AI-generated response
       description: |
         Sends a user message to the RAG system and receives an AI-generated response
-        with source attribution. Each source includes document ID and chunk index
+        with source attribution. Each source includes chunk ID, document ID, and chunk index
         for traceability.
       operationId: chat
       tags:
@@ -54,12 +54,14 @@ paths:
                       - role: "assistant"
                         content: "Machine learning is a subset of artificial intelligence..."
                     sources:
-                      - id: "a1b2c3d4-5678-9abc-def0-123456789abc"
+                      - id: "chunk_a1b2c3d4_5"
+                        documentId: "a1b2c3d4-5678-9abc-def0-123456789abc"
                         chunkText: "Machine learning is a subset of artificial intelligence that focuses on enabling computers to learn from data without being explicitly programmed."
                         chunkIndex: 5
                         source: "ai-research.pdf"
                         distance: 0.85
-                      - id: "e5f6a7b8-9012-3cde-f456-789012345678"
+                      - id: "chunk_e5f6a7b8_12"
+                        documentId: "e5f6a7b8-9012-3cde-f456-789012345678"
                         chunkText: "Neural networks are a key component of modern ML systems, inspired by the structure of biological neural networks."
                         chunkIndex: 12
                         source: "ml-fundamentals.pdf"
@@ -81,11 +83,13 @@ paths:
                         content: "Based on the knowledge graph, machine learning encompasses..."
                     sources:
                       - id: null
+                        documentId: null
                         chunkText: "Based on entities: Machine Learning, Supervised Learning, Unsupervised Learning, Reinforcement Learning. These are the primary paradigms in the field."
                         chunkIndex: null
                         source: "LightRAG Answer"
                         distance: null
-                      - id: "a1b2c3d4-5678-9abc-def0-123456789abc"
+                      - id: "chunk_a1b2c3d4_3"
+                        documentId: "a1b2c3d4-5678-9abc-def0-123456789abc"
                         chunkText: "Supervised learning uses labeled training data..."
                         chunkIndex: 3
                         source: "ml-basics.pdf"
@@ -192,7 +196,7 @@ components:
           type: array
           description: |
             **KEY FEATURE**: Source chunks used to generate the response.
-            Each source includes `id` (document UUID) and `chunkIndex` for traceability.
+            Each source includes `id` (chunk identifier), `documentId` (document UUID), and `chunkIndex` for traceability.
           items:
             $ref: '#/components/schemas/SearchResult'
         model:
@@ -242,6 +246,14 @@ components:
       properties:
         id:
           type: string
+          nullable: true
+          description: |
+            **FEATURE FIELD**: Chunk identifier (unique ID for this specific chunk).
+            - Non-null: Direct document chunk with unique identifier (e.g., "chunk_docid_5")
+            - Null: Synthesized answer from knowledge graph (not directly citable)
+          example: "chunk_a1b2c3d4_5"
+        documentId:
+          type: string
           format: uuid
           nullable: true
           description: |
@@ -262,7 +274,7 @@ components:
             - Non-null: Chunked document with sequential chunk numbering
             - Null: Synthesized answer or non-chunked source
             
-            Combined with `id`, this enables precise citations like [UUID:chunk-5].
+            Combined with `id` and `documentId`, this enables precise citations like [chunk_id].
           example: 5
         source:
           type: string

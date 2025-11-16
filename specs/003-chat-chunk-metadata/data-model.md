@@ -6,7 +6,7 @@
 
 ## Overview
 
-This feature exposes existing metadata fields (`id`, `chunkIndex`) in the `SearchResult` entity through the chat API response. No new entities or database schemas are required - this is purely a validation exercise to ensure proper JSON serialization.
+This feature exposes existing metadata fields (`id`, `documentId`, `chunkIndex`) in the `SearchResult` entity through the chat API response. No new entities or database schemas are required - this is primarily a validation exercise to ensure proper JSON serialization.
 
 ---
 
@@ -47,21 +47,23 @@ This feature exposes existing metadata fields (`id`, `chunkIndex`) in the `Searc
 **Fields**:
 | Field | Type | Required | Description | Validation | Edge Cases |
 |-------|------|----------|-------------|------------|------------|
-| `id` | `UUID` | No | **Document identifier** - unique ID of the source document | Valid UUID v7 or null | Null for synthesized answers (e.g., LightRAG Answer) |
+| `id` | `String` | No | **Chunk identifier** - unique ID for this specific chunk | Non-null string or null | Null for synthesized answers (e.g., LightRAG Answer) |
+| `documentId` | `UUID` | No | **Document identifier** - unique ID of the source document | Valid UUID v7 or null | Null for synthesized answers (e.g., LightRAG Answer) |
 | `chunkText` | `String` | Yes | Text content of the chunk | Non-null, non-empty | May contain multi-line text |
 | `chunkIndex` | `Integer` | No | **Chunk position** within the document (0-based or 1-based) | Non-negative integer or null | Null for synthesized answers or non-chunked sources |
 | `source` | `String` | Yes | Human-readable source label (e.g., "document.pdf", "LightRAG Answer") | Non-null, non-empty | Special value "LightRAG Answer" identifies synthesized content |
 | `distance` | `Double` | No | Similarity score from vector search (0.0 = identical, 1.0 = dissimilar) | 0.0-1.0 or null | Null for synthesized answers |
 
 **Relationships**:
-- Belongs to 0..1 `Document` (via `id` field)
+- Belongs to 0..1 `Document` (via `documentId` field)
 - Referenced by `ChatResponse.sources`
 
 **State**: Immutable (Java record)
 
 **Notes**:
 - **This is the PRIMARY entity for this feature**
-- Fields `id` and `chunkIndex` are the focus - must be serialized to JSON
+- Fields `id`, `documentId`, and `chunkIndex` are the focus - must be serialized to JSON
+- `id` represents the chunk-specific identifier, while `documentId` links to the parent document
 - Already correctly implemented in code; feature is about validation and documentation
 
 ---
@@ -100,7 +102,8 @@ ChatResponse {
     messages: [...],
     sources: [
         SearchResult {
-            id: UUID("a1b2c3d4..."),          ← Feature requirement: expose this
+            id: "chunk_a1b2c3d4_5",            ← Feature requirement: expose this
+            documentId: UUID("a1b2c3d4..."),   ← Feature requirement: expose this
             chunkIndex: 5,                     ← Feature requirement: expose this
             chunkText: "...",
             source: "document.pdf",
@@ -108,6 +111,7 @@ ChatResponse {
         },
         SearchResult {
             id: null,                          ← Edge case: synthesized answer
+            documentId: null,
             chunkIndex: null,
             chunkText: "...",
             source: "LightRAG Answer",
@@ -127,16 +131,27 @@ HTTP Response to Client
 
 ## Field Population Rules
 
-### SearchResult.id (documentId)
+### SearchResult.id (chunkId)
+
+**Population Logic**:
+- **Document chunks**: Populated with a unique identifier for the specific chunk (e.g., "chunk_docid_5")
+- **Synthesized answers**: `null` (no backing chunk)
+- **Source**: `LightRAGQueryResult.SourceChunk.chunkId()` provides this identifier
+
+**Business Rules**:
+- If `id` is `null`, the source is not directly citable to a specific chunk
+- If `id` is not `null`, clients can use it for precise citations in the format `[chunkId]`
+
+### SearchResult.documentId
 
 **Population Logic**:
 - **Document chunks**: Populated with the UUID of the source document from database
 - **Synthesized answers**: `null` (no backing document)
-- **Source**: `SearchService` queries the database and populates this field
+- **Source**: `LightRAGQueryResult.SourceChunk.documentId()` provides this UUID
 
 **Business Rules**:
-- If `id` is `null`, the source is not directly citable to a specific document
-- If `id` is not `null`, clients can use it to fetch the full document or link to it
+- If `documentId` is `null`, the source is not directly citable to a specific document
+- If `documentId` is not `null`, clients can use it to fetch the full document or link to it
 
 ### SearchResult.chunkIndex
 
@@ -147,7 +162,7 @@ HTTP Response to Client
 - **Source**: `TextChunker` assigns indices during document processing; stored in database
 
 **Business Rules**:
-- If `chunkIndex` is not `null`, clients can use it with `id` to construct citations like `[UUID:chunk-N]`
+- If `chunkIndex` is not `null`, clients can use it with `id` and `documentId` to construct precise citations
 - If `chunkIndex` is `null`, the source cannot be cited at chunk-level granularity
 
 ---
@@ -171,14 +186,16 @@ HTTP Response to Client
   ],
   "sources": [
     {
-      "id": "a1b2c3d4-5678-9abc-def0-123456789abc",
+      "id": "chunk_a1b2c3d4_5",
+      "documentId": "a1b2c3d4-5678-9abc-def0-123456789abc",
       "chunkText": "Machine learning is a subset of artificial intelligence that focuses on...",
       "chunkIndex": 5,
       "source": "ai-research.pdf",
       "distance": 0.85
     },
     {
-      "id": "e5f6a7b8-9012-3cde-f456-789012345678",
+      "id": "chunk_e5f6a7b8_12",
+      "documentId": "e5f6a7b8-9012-3cde-f456-789012345678",
       "chunkText": "Neural networks are a key component of modern ML systems...",
       "chunkIndex": 12,
       "source": "ml-fundamentals.pdf",
@@ -186,6 +203,7 @@ HTTP Response to Client
     },
     {
       "id": null,
+      "documentId": null,
       "chunkText": "Based on the knowledge graph, machine learning encompasses...",
       "chunkIndex": null,
       "source": "LightRAG Answer",
@@ -222,6 +240,8 @@ HTTP Response to Client
 
 ---
 
+---
+
 ### Case 2: Synthesized Answer (Null IDs)
 
 **Scenario**: LightRAG generates an answer from the knowledge graph without direct document chunks
@@ -232,6 +252,7 @@ HTTP Response to Client
   "sources": [
     {
       "id": null,
+      "documentId": null,
       "chunkText": "Based on entities: MIT, Stanford...",
       "chunkIndex": null,
       "source": "LightRAG Answer",
@@ -241,7 +262,9 @@ HTTP Response to Client
 }
 ```
 
-**Validation**: `id` and `chunkIndex` are explicitly `null`, not omitted
+**Validation**: `id`, `documentId`, and `chunkIndex` are explicitly `null`, not omitted
+
+---
 
 ---
 
@@ -255,13 +278,15 @@ HTTP Response to Client
   "sources": [
     {
       "id": null,
+      "documentId": null,
       "chunkText": "Synthesized context from knowledge graph...",
       "chunkIndex": null,
       "source": "LightRAG Answer",
       "distance": null
     },
     {
-      "id": "a1b2c3d4...",
+      "id": "chunk_a1b2c3d4_5",
+      "documentId": "a1b2c3d4-5678-9abc-def0-123456789abc",
       "chunkText": "Direct excerpt from document...",
       "chunkIndex": 5,
       "source": "document.pdf",
@@ -292,7 +317,8 @@ HTTP Response to Client
 - Each `SearchResult` in `sources` must have:
   - `chunkText`: non-null, non-empty string
   - `source`: non-null, non-empty string
-  - `id`: null OR valid UUID string in JSON
+  - `id`: null OR string identifier for chunk in JSON
+  - `documentId`: null OR valid UUID string in JSON
   - `chunkIndex`: null OR non-negative integer
   - `distance`: null OR number between 0.0 and 1.0
 
@@ -300,9 +326,9 @@ HTTP Response to Client
 
 ## Summary
 
-**No new entities or schemas** - this feature validates that existing entities are properly serialized to JSON:
-1. ✅ `SearchResult` record already has `id` and `chunkIndex` fields
+**No new database schemas** - this feature restructures the SearchResult entity for better clarity:
+1. ✅ `SearchResult` record now has `id` (chunk ID), `documentId` (document UUID), and `chunkIndex` fields
 2. ✅ `ChatResponse` already includes `List<SearchResult> sources`
 3. ✅ Jackson serialization automatically handles records
-4. 🎯 **Implementation Focus**: Write integration tests to verify JSON structure
+4. 🎯 **Implementation Focus**: Restructured to separate chunk identity from document identity
 5. 📝 **Documentation Focus**: Update API contracts and quickstart guide

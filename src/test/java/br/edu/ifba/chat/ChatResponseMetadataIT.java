@@ -106,11 +106,12 @@ public class ChatResponseMetadataIT {
             .body("response", notNullValue())
             .body("sources", notNullValue())
             .body("sources", not(empty()))
-            // Verify at least one source has both id and chunkIndex
-            .body("sources.findAll { it.id != null }.size()", greaterThan(0))
-            .body("sources.findAll { it.id != null }.chunkIndex", everyItem(notNullValue()))
-            .body("sources.findAll { it.id != null }.chunkText", everyItem(notNullValue()))
-            .body("sources.findAll { it.id != null }.source", everyItem(notNullValue()));
+            // Verify at least one source has id (chunk ID), documentId, and chunkIndex
+            .body("sources.findAll { it.documentId != null }.size()", greaterThan(0))
+            .body("sources.findAll { it.documentId != null }.id", everyItem(notNullValue()))
+            .body("sources.findAll { it.documentId != null }.chunkIndex", everyItem(notNullValue()))
+            .body("sources.findAll { it.documentId != null }.chunkText", everyItem(notNullValue()))
+            .body("sources.findAll { it.documentId != null }.source", everyItem(notNullValue()));
     }
 
     /**
@@ -142,8 +143,8 @@ public class ChatResponseMetadataIT {
             .response();
 
         // Extract sources and verify chunk indices are unique for same document
-        final List<String> documentIds = response.jsonPath().getList("sources.findAll { it.id != null }.id");
-        final List<Integer> chunkIndices = response.jsonPath().getList("sources.findAll { it.id != null }.chunkIndex");
+        final List<String> documentIds = response.jsonPath().getList("sources.findAll { it.documentId != null }.documentId");
+        final List<Integer> chunkIndices = response.jsonPath().getList("sources.findAll { it.documentId != null }.chunkIndex");
         
         // Verify sources exist
         if (!documentIds.isEmpty()) {
@@ -246,8 +247,8 @@ public class ChatResponseMetadataIT {
             final int citedChunkIndex = Integer.parseInt(matcher.group(2));
 
             // Verify this citation exists in sources
-            final List<String> sourceIds = response.jsonPath().getList("sources.findAll { it.id != null }.id");
-            final List<Integer> sourceChunkIndices = response.jsonPath().getList("sources.findAll { it.id != null }.chunkIndex");
+            final List<String> sourceIds = response.jsonPath().getList("sources.findAll { it.documentId != null }.documentId");
+            final List<Integer> sourceChunkIndices = response.jsonPath().getList("sources.findAll { it.documentId != null }.chunkIndex");
 
             boolean citationFound = false;
             for (int i = 0; i < sourceIds.size(); i++) {
@@ -294,7 +295,7 @@ public class ChatResponseMetadataIT {
             .response();
 
         final String responseText = response.jsonPath().getString("response");
-        final List<String> sourceIds = response.jsonPath().getList("sources.findAll { it.id != null }.id");
+        final List<String> sourceIds = response.jsonPath().getList("sources.findAll { it.documentId != null }.documentId");
 
         // Extract all unique document IDs from citations
         final Pattern citationPattern = Pattern.compile("\\[([0-9a-f-]+):chunk-(\\d+)\\]");
@@ -353,7 +354,7 @@ public class ChatResponseMetadataIT {
                 .post(CHAT_ENDPOINT)
             .then()
                 .statusCode(200)
-                .body("sources.find { it.source == 'LightRAG Answer' }.id", is(nullValue()))
+                .body("sources.find { it.source == 'LightRAG Answer' }.documentId", is(nullValue()))
                 .body("sources.find { it.source == 'LightRAG Answer' }.chunkIndex", is(nullValue()));
         }
     }
@@ -390,8 +391,8 @@ public class ChatResponseMetadataIT {
         
         if (sources.size() > 1) {
             // Count sources with and without document IDs
-            final long sourcesWithIds = response.jsonPath().getLong("sources.findAll { it.id != null }.size()");
-            final long sourcesWithoutIds = response.jsonPath().getLong("sources.findAll { it.id == null }.size()");
+            final long sourcesWithIds = response.jsonPath().getLong("sources.findAll { it.documentId != null }.size()");
+            final long sourcesWithoutIds = response.jsonPath().getLong("sources.findAll { it.documentId == null }.size()");
             
             // Verify we have both types (if applicable)
             assert sourcesWithIds > 0 || sourcesWithoutIds > 0 :

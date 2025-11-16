@@ -45,7 +45,8 @@ curl -X POST http://localhost:8080/api/v1/chat \
 ```
 
 **Key Fields**:
-- `sources[].id`: Document UUID (use to fetch full document or build links)
+- `sources[].id`: Chunk identifier (unique ID for this specific chunk)
+- `sources[].documentId`: Document UUID (use to fetch full document or build links)
 - `sources[].chunkIndex`: Chunk position within document (enables precise citations)
 
 ---
@@ -70,8 +71,8 @@ async function chat(projectId, message) {
   // Extract unique document IDs
   const documentIds = [...new Set(
     data.sources
-      .filter(s => s.id !== null)  // Exclude synthesized answers
-      .map(s => s.id)
+      .filter(s => s.documentId !== null)  // Exclude synthesized answers
+      .map(s => s.documentId)
   )];
   
   console.log('Response used', documentIds.length, 'documents');
@@ -107,8 +108,8 @@ def verify_citations(response: Dict) -> Dict[str, bool]:
     # Build a set of valid source identifiers
     valid_sources = set()
     for source in response['sources']:
-        if source['id'] and source['chunkIndex'] is not None:
-            valid_sources.add((source['id'], source['chunkIndex']))
+        if source['documentId'] and source['chunkIndex'] is not None:
+            valid_sources.add((source['documentId'], source['chunkIndex']))
     
     # Verify each citation
     verification = {}
@@ -135,7 +136,8 @@ print(f"Citation verification: {results}")
 ```tsx
 // React/TypeScript example
 interface Source {
-  id: string | null;
+  id: string | null;          // Chunk ID
+  documentId: string | null;  // Document UUID
   chunkText: string;
   chunkIndex: number | null;
   source: string;
@@ -149,8 +151,8 @@ interface ChatResponseData {
 }
 
 function CitationList({ sources }: { sources: Source[] }) {
-  // Filter out synthesized answers (null IDs)
-  const citableSources = sources.filter(s => s.id !== null);
+  // Filter out synthesized answers (null documentId)
+  const citableSources = sources.filter(s => s.documentId !== null);
   
   return (
     <div className="citations">
@@ -201,7 +203,7 @@ public class ChatResponseHandler {
     public List<SourceInfo> processeSources(ChatResponse response) {
         return response.sources().stream()
             .map(source -> {
-                if (source.id() == null) {
+                if (source.documentId() == null) {
                     // Synthesized answer - not directly citable
                     return new SourceInfo(
                         source.source(),  // "LightRAG Answer"
@@ -209,10 +211,8 @@ public class ChatResponseHandler {
                         null
                     );
                 } else {
-                    // Document source - citable
-                    String citationId = source.chunkIndex() != null
-                        ? String.format("[%s:chunk-%d]", source.id(), source.chunkIndex())
-                        : String.format("[%s]", source.id());
+                    // Document source - citable using chunk ID
+                    String citationId = String.format("[%s]", source.id());
                     
                     return new SourceInfo(
                         source.source(),  // "document.pdf"
@@ -254,8 +254,9 @@ curl -X POST http://localhost:8080/api/v1/chat \
   }' | jq '{
     answer: .response,
     sources: .sources | map({
+      chunkId: .id,
+      documentId: .documentId,
       document: .source,
-      documentId: .id,
       chunkIndex: .chunkIndex
     })
   }'
@@ -273,8 +274,9 @@ curl -X POST http://localhost:8080/api/v1/chat \
   }' | jq '{
     answer: .response,
     citations: [.response | scan("\\[([a-f0-9-]+):chunk-(\\d+)\\]"; "g")],
-    availableSources: .sources | map(select(.id != null)) | map({
-      id: .id,
+    availableSources: .sources | map(select(.documentId != null)) | map({
+      chunkId: .id,
+      documentId: .documentId,
       chunkIndex: .chunkIndex,
       source: .source
     })
@@ -336,11 +338,12 @@ curl -X POST http://localhost:8080/api/v1/chat \
   -d "{
     \"projectId\": \"$PROJECT_ID\",
     \"message\": \"Test query\"
-  }" | jq '.sources[] | select(.id != null) | {id, chunkIndex, source}'
+  }" | jq '.sources[] | select(.documentId != null) | {id, documentId, chunkIndex, source}'
 
 # Should output entries like:
 # {
-#   "id": "abc123...",
+#   "id": "chunk_abc123",
+#   "documentId": "a1b2c3d4-...",
 #   "chunkIndex": 0,
 #   "source": "ai-research.txt"
 # }
@@ -369,24 +372,25 @@ curl -X POST http://localhost:8080/api/v1/chat \
 **If you want to use the new metadata**:
 
 1. Update your response type definitions to include the new fields:
-   ```typescript
-   interface SearchResult {
-     id: string | null;          // NEW
-     chunkIndex: number | null;  // NEW
-     chunkText: string;
-     source: string;
-     distance: number | null;
-   }
-   ```
+  ```typescript
+  interface SearchResult {
+    id: string | null;          // NEW - Chunk ID
+    documentId: string | null;  // NEW - Document UUID
+    chunkIndex: number | null;  // NEW - Chunk position
+    chunkText: string;
+    source: string;
+    distance: number | null;
+  }
+  ```
 
 2. Handle null values for synthesized answers:
    ```typescript
-   const citableSources = response.sources.filter(s => s.id !== null);
+   const citableSources = response.sources.filter(s => s.documentId !== null);
    ```
 
 3. Build citations using the new fields:
    ```typescript
-   const citation = `[${source.id}:chunk-${source.chunkIndex}]`;
+   const citation = `[${source.id}]`;  // Using chunk ID
    ```
 
 **If you don't need the metadata**:
