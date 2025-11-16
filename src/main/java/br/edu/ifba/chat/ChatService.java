@@ -91,16 +91,46 @@ public class ChatService {
         
         LOG.infof("Received response from LLM: %s", assistantMessage.content());
 
-        // Post-process response: remove invalid citations when no citable sources exist
+        // Post-process response: validate and clean citations
         // This handles cases where the LLM invents citations despite instructions not to
         String processedContent = assistantMessage.content();
-        boolean hasAnyCitableSources = sources.stream()
-            .anyMatch(source -> source.documentId() != null);
         
-        if (!hasAnyCitableSources) {
-            // Remove all bracketed citations (e.g., [UUID], [e2cd5fc7-...], [sem-uuid-fornecido], [RAG-contexto-001], [Contexto], etc.)
+        // Collect valid chunk IDs from sources with documentId (citable sources only)
+        java.util.Set<String> validChunkIds = sources.stream()
+            .filter(source -> source.documentId() != null && source.id() != null)
+            .map(SearchResult::id)
+            .collect(java.util.stream.Collectors.toSet());
+        
+        if (validChunkIds.isEmpty()) {
+            // No citable sources - remove ALL bracketed citations
             processedContent = processedContent.replaceAll("\\s*\\[([^\\]]+)\\]", "");
-            LOG.infof("Removed invented citations from response (no citable sources available)");
+            LOG.infof("Removed all citations from response (no citable sources available)");
+        } else {
+            // Have citable sources - remove only INVALID citations
+            // Pattern matches citations like [chunk_id] or [any-text-here]
+            java.util.regex.Pattern citationPattern = java.util.regex.Pattern.compile("\\[([^\\]]+)\\]");
+            java.util.regex.Matcher matcher = citationPattern.matcher(processedContent);
+            java.lang.StringBuffer sb = new java.lang.StringBuffer();
+            int removedCount = 0;
+            
+            while (matcher.find()) {
+                String citedId = matcher.group(1);
+                if (validChunkIds.contains(citedId)) {
+                    // Valid citation - keep it
+                    matcher.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(matcher.group(0)));
+                } else {
+                    // Invalid citation - remove it (including surrounding space)
+                    matcher.appendReplacement(sb, "");
+                    removedCount++;
+                    LOG.warnf("Removed invalid citation: [%s] (not in valid chunk IDs)", citedId);
+                }
+            }
+            matcher.appendTail(sb);
+            
+            if (removedCount > 0) {
+                processedContent = sb.toString();
+                LOG.infof("Removed %d invalid citation(s) from response", removedCount);
+            }
         }
 
         final ChatMessage finalAssistantMessage = new ChatMessage(assistantMessage.role(), processedContent);
@@ -185,11 +215,11 @@ public class ChatService {
         context.append("\n\n");
         
         // Add citation instruction - ONLY when citable sources exist
-        context.append("IMPORTANTE: Ao responder, você DEVE citar as fontes usando o formato [UUID:chunk-N] entre colchetes. ");
-        context.append("Exemplo: [a1b2c3d4-5678-9abc-def0-123456789abc:chunk-5]. ");
-        context.append("NUNCA invente IDs de citação. Use APENAS os IDs exatos fornecidos entre colchetes nas fontes abaixo. ");
-        context.append("Cada trecho tem seu próprio ID único com número do chunk. ");
-        context.append("NÃO copie IDs de outras mensagens ou exemplos. ");
+        context.append("IMPORTANTE: Ao responder, você DEVE citar as fontes dos DOCUMENTOS ORIGINAIS usando o ID do chunk entre colchetes. ");
+        context.append("Exemplo: [chunk_a1b2c3d4_5]. ");
+        context.append("NUNCA invente IDs de citação. Use APENAS os IDs exatos fornecidos entre colchetes nos DOCUMENTOS ORIGINAIS abaixo. ");
+        context.append("NÃO cite a 'RESPOSTA SINTETIZADA' - ela é apenas contexto de apoio. ");
+        context.append("SOMENTE cite documentos originais com IDs explícitos. ");
         context.append("Se não houver ID listado para uma informação, NÃO cite.\n\n");
         context.append(String.format("Fontes disponíveis (%d documento(s)):\n\n", citableSources));
 
@@ -200,10 +230,11 @@ public class ChatService {
             final SearchResult source = sources.get(i);
             
             // First source is usually the LightRAG synthesized answer - include it as helpful context
+            // but make it clear it's NOT citable
             if (i == 0 && source.documentId() == null && "LightRAG Answer".equals(source.source())) {
-                context.append("=== RESPOSTA SINTETIZADA (use como referência) ===\n");
+                context.append("=== RESPOSTA SINTETIZADA (use como referência, MAS NÃO CITE) ===\n");
                 context.append(source.chunkText());
-                context.append("\n\n=== DOCUMENTOS ORIGINAIS ===\n\n");
+                context.append("\n\n=== DOCUMENTOS ORIGINAIS (use estes IDs para citação) ===\n\n");
                 continue;
             }
             
