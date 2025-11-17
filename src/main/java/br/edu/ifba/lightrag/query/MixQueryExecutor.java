@@ -70,8 +70,9 @@ public class MixQueryExecutor extends QueryExecutor {
                         List<VectorStorage.VectorSearchResult> entityResults = entitySearchFuture.join();
                         List<VectorStorage.VectorSearchResult> chunkResults = chunkSearchFuture.join();
                         
+                        // Extract entity names from content field (not vector ID)
                         List<String> seedEntityIds = entityResults.stream()
-                            .map(VectorStorage.VectorSearchResult::id)
+                            .map(result -> result.metadata().content())
                             .toList();
                         
                         if (seedEntityIds.isEmpty()) {

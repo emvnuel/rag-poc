@@ -78,9 +78,10 @@ public class SearchService {
                 final LightRAGQueryResult.SourceChunk source = queryResult.sourceChunks().get(i);
                 
                 // Skip sources without document IDs (e.g., knowledge graph entities)
-                if (source.documentId() == null) {
-                    LOG.debugf("Skipping source without document ID: %s (type: %s)", 
-                              source.chunkId(), source.type());
+                    // Also skip entity-type chunks explicitly to prevent them from being cited
+                if (source.documentId() == null || "entity".equals(source.type())) {
+                    LOG.debugf("Skipping non-citable source: %s (type: %s, documentId: %s)", 
+                              source.chunkId(), source.type(), source.documentId());
                     continue;
                 }
                 
