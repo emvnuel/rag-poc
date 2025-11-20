@@ -66,12 +66,11 @@ public class PgVectorStorage implements VectorStorage {
                 // halfvec uses 2 bytes per dimension vs 4 bytes for vector
                 // Supported up to 4,000 dimensions with HNSW index
                 String createTableSql = String.format("""
-                    CREATE TABLE IF NOT EXISTS %s (
+                    CREATE TABLE IF NOT EXISTS rag.%s (
                         id UUID PRIMARY KEY,
                         vector halfvec(%d) NOT NULL,
                         type TEXT NOT NULL,
                         content TEXT NOT NULL,
-                        source_id TEXT,
                         document_id UUID,
                         chunk_index INTEGER,
                         project_id UUID,
@@ -81,42 +80,68 @@ public class PgVectorStorage implements VectorStorage {
                 
                 stmt.execute(createTableSql);
                 
-                // Try to add foreign key constraint if document table exists
-                // Note: Using ag_catalog schema since Hibernate tables are created there
-                // This is done separately so initialization doesn't fail if document table doesn't exist yet
+                // Add foreign key constraints for document_id and project_id
+                // Note: Using rag schema for application tables (documents, projects, lightrag_vectors)
+                // ag_catalog is only used by Apache AGE for graph metadata (ag_graph, ag_label)
+                // This is done separately so initialization doesn't fail if tables don't exist yet
+                
+                // Add document_id foreign key with CASCADE delete
                 try {
-                    String addConstraintSql = String.format("""
+                    String addDocumentFkSql = String.format("""
                         DO $$
                         BEGIN
                             IF NOT EXISTS (
                                 SELECT 1 FROM pg_constraint 
                                 WHERE conname = 'fk_lightrag_vectors_document'
-                                AND conrelid = 'ag_catalog.lightrag_vectors'::regclass
+                                AND conrelid = 'rag.lightrag_vectors'::regclass
                             ) THEN
-                                ALTER TABLE ag_catalog.%s 
+                                ALTER TABLE rag.%s 
                                 ADD CONSTRAINT fk_lightrag_vectors_document 
-                                FOREIGN KEY (document_id) REFERENCES ag_catalog.documents(id) ON DELETE CASCADE;
+                                FOREIGN KEY (document_id) REFERENCES rag.documents(id) ON DELETE CASCADE;
                             END IF;
                         END
                         $$;
                         """, tableName);
-                    stmt.execute(addConstraintSql);
-                    logger.debug("Foreign key constraint added to {}", tableName);
+                    stmt.execute(addDocumentFkSql);
+                    logger.debug("Foreign key constraint fk_lightrag_vectors_document added to {}", tableName);
                 } catch (SQLException e) {
-                    logger.warn("Could not add foreign key constraint (document table may not exist yet): {}", e.getMessage());
+                    logger.warn("Could not add document_id foreign key constraint (document table may not exist yet): {}", e.getMessage());
+                }
+                
+                // Add project_id foreign key with CASCADE delete
+                try {
+                    String addProjectFkSql = String.format("""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_constraint 
+                                WHERE conname = 'fk_lightrag_vectors_project'
+                                AND conrelid = 'rag.lightrag_vectors'::regclass
+                            ) THEN
+                                ALTER TABLE rag.%s 
+                                ADD CONSTRAINT fk_lightrag_vectors_project 
+                                FOREIGN KEY (project_id) REFERENCES rag.projects(id) ON DELETE CASCADE;
+                            END IF;
+                        END
+                        $$;
+                        """, tableName);
+                    stmt.execute(addProjectFkSql);
+                    logger.debug("Foreign key constraint fk_lightrag_vectors_project added to {}", tableName);
+                } catch (SQLException e) {
+                    logger.warn("Could not add project_id foreign key constraint (project table may not exist yet): {}", e.getMessage());
                 }
                 
                 // Create index for vector similarity search (using HNSW for better performance)
                 // Using halfvec_cosine_ops for halfvec type (cosine distance)
                 String createIndexSql = String.format(
-                    "CREATE INDEX IF NOT EXISTS %s_vector_idx ON %s USING hnsw (vector halfvec_cosine_ops)",
+                    "CREATE INDEX IF NOT EXISTS %s_vector_idx ON rag.%s USING hnsw (vector halfvec_cosine_ops)",
                     tableName, tableName
                 );
                 stmt.execute(createIndexSql);
                 
                 // Create index on type for filtered queries
                 String createTypeIndexSql = String.format(
-                    "CREATE INDEX IF NOT EXISTS %s_type_idx ON %s (type)",
+                    "CREATE INDEX IF NOT EXISTS %s_type_idx ON rag.%s (type)",
                     tableName, tableName
                 );
                 stmt.execute(createTypeIndexSql);
@@ -139,13 +164,12 @@ public class PgVectorStorage implements VectorStorage {
         return CompletableFuture.runAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 String sql = String.format("""
-                    INSERT INTO %s (id, vector, type, content, source_id, document_id, chunk_index, project_id)
-                    VALUES (?, ?::halfvec, ?, ?, ?, ?::uuid, ?, ?::uuid)
+                    INSERT INTO rag.%s (id, vector, type, content, document_id, chunk_index, project_id)
+                    VALUES (?, ?::halfvec, ?, ?, ?::uuid, ?, ?::uuid)
                     ON CONFLICT (id) DO UPDATE SET
                         vector = EXCLUDED.vector,
                         type = EXCLUDED.type,
                         content = EXCLUDED.content,
-                        source_id = EXCLUDED.source_id,
                         document_id = EXCLUDED.document_id,
                         chunk_index = EXCLUDED.chunk_index,
                         project_id = EXCLUDED.project_id
@@ -156,17 +180,16 @@ public class PgVectorStorage implements VectorStorage {
                     pstmt.setString(2, vectorToString(vector));
                     pstmt.setString(3, metadata.type());
                     pstmt.setString(4, metadata.content());
-                    pstmt.setString(5, metadata.sourceId());
                     if (metadata.documentId() != null) {
-                        pstmt.setObject(6, UUID.fromString(metadata.documentId()));
+                        pstmt.setObject(5, UUID.fromString(metadata.documentId()));
                     } else {
-                        pstmt.setNull(6, java.sql.Types.OTHER);
+                        pstmt.setNull(5, java.sql.Types.OTHER);
                     }
-                    pstmt.setInt(7, metadata.chunkIndex() != null ? metadata.chunkIndex() : 0);
+                    pstmt.setInt(6, metadata.chunkIndex() != null ? metadata.chunkIndex() : 0);
                     if (metadata.projectId() != null) {
-                        pstmt.setObject(8, UUID.fromString(metadata.projectId()));
+                        pstmt.setObject(7, UUID.fromString(metadata.projectId()));
                     } else {
-                        pstmt.setNull(8, java.sql.Types.OTHER);
+                        pstmt.setNull(7, java.sql.Types.OTHER);
                     }
                     
                     try {
@@ -202,13 +225,12 @@ public class PgVectorStorage implements VectorStorage {
                 conn.setAutoCommit(false);
                 
                 String sql = String.format("""
-                    INSERT INTO %s (id, vector, type, content, source_id, document_id, chunk_index, project_id)
-                    VALUES (?, ?::halfvec, ?, ?, ?, ?::uuid, ?, ?::uuid)
+                    INSERT INTO rag.%s (id, vector, type, content, document_id, chunk_index, project_id)
+                    VALUES (?, ?::halfvec, ?, ?, ?::uuid, ?, ?::uuid)
                     ON CONFLICT (id) DO UPDATE SET
                         vector = EXCLUDED.vector,
                         type = EXCLUDED.type,
                         content = EXCLUDED.content,
-                        source_id = EXCLUDED.source_id,
                         document_id = EXCLUDED.document_id,
                         chunk_index = EXCLUDED.chunk_index,
                         project_id = EXCLUDED.project_id
@@ -221,17 +243,16 @@ public class PgVectorStorage implements VectorStorage {
                         pstmt.setString(2, vectorToString(entry.vector()));
                         pstmt.setString(3, entry.metadata().type());
                         pstmt.setString(4, entry.metadata().content());
-                        pstmt.setString(5, entry.metadata().sourceId());
                         if (entry.metadata().documentId() != null) {
-                            pstmt.setObject(6, UUID.fromString(entry.metadata().documentId()));
+                            pstmt.setObject(5, UUID.fromString(entry.metadata().documentId()));
                         } else {
-                            pstmt.setNull(6, java.sql.Types.OTHER);
+                            pstmt.setNull(5, java.sql.Types.OTHER);
                         }
-                        pstmt.setInt(7, entry.metadata().chunkIndex() != null ? entry.metadata().chunkIndex() : 0);
+                        pstmt.setInt(6, entry.metadata().chunkIndex() != null ? entry.metadata().chunkIndex() : 0);
                         if (entry.metadata().projectId() != null) {
-                            pstmt.setObject(8, UUID.fromString(entry.metadata().projectId()));
+                            pstmt.setObject(7, UUID.fromString(entry.metadata().projectId()));
                         } else {
-                            pstmt.setNull(8, java.sql.Types.OTHER);
+                            pstmt.setNull(7, java.sql.Types.OTHER);
                         }
                         pstmt.addBatch();
                     }
@@ -274,9 +295,9 @@ public class PgVectorStorage implements VectorStorage {
                 // Build query with direct project_id filtering (no JOIN needed)
                 StringBuilder sqlBuilder = new StringBuilder();
                 sqlBuilder.append(String.format("""
-                    SELECT v.id, v.type, v.content, v.source_id, v.document_id, v.chunk_index, v.project_id,
+                    SELECT v.id, v.type, v.content, v.document_id, v.chunk_index, v.project_id,
                            1 - (v.vector <=> ?::halfvec) AS similarity
-                    FROM %s v
+                    FROM rag.%s v
                     WHERE 1=1
                     """, tableName));
                 
@@ -316,7 +337,6 @@ public class PgVectorStorage implements VectorStorage {
                         VectorMetadata metadata = new VectorMetadata(
                             rs.getString("type"),
                             rs.getString("content"),
-                            rs.getString("source_id"),
                             rs.getString("document_id"),
                             rs.getInt("chunk_index"),
                             rs.getString("project_id")
@@ -343,7 +363,7 @@ public class PgVectorStorage implements VectorStorage {
     public CompletableFuture<Boolean> delete(@NotNull String id) {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
-                String sql = String.format("DELETE FROM %s WHERE id = ?", tableName);
+                String sql = String.format("DELETE FROM rag.%s WHERE id = ?", tableName);
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                     pstmt.setString(1, id);
@@ -368,7 +388,7 @@ public class PgVectorStorage implements VectorStorage {
             try (Connection conn = dataSource.getConnection()) {
                 conn.setAutoCommit(false);
                 
-                String sql = String.format("DELETE FROM %s WHERE id = ?", tableName);
+                String sql = String.format("DELETE FROM rag.%s WHERE id = ?", tableName);
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                     for (String id : ids) {
@@ -399,7 +419,7 @@ public class PgVectorStorage implements VectorStorage {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 String sql = String.format(
-                    "SELECT id, vector, type, content, source_id, document_id, chunk_index FROM %s WHERE id = ?",
+                    "SELECT id, vector, type, content, document_id, chunk_index, project_id FROM rag.%s WHERE id = ?",
                     tableName
                 );
                 
@@ -412,7 +432,6 @@ public class PgVectorStorage implements VectorStorage {
                         VectorMetadata metadata = new VectorMetadata(
                             rs.getString("type"),
                             rs.getString("content"),
-                            rs.getString("source_id"),
                             rs.getString("document_id"),
                             rs.getInt("chunk_index"),
                             rs.getString("project_id")
@@ -440,7 +459,7 @@ public class PgVectorStorage implements VectorStorage {
             try (Connection conn = dataSource.getConnection();
                  Statement stmt = conn.createStatement()) {
                 
-                stmt.execute(String.format("TRUNCATE TABLE %s", tableName));
+                stmt.execute(String.format("TRUNCATE TABLE rag.%s", tableName));
                 logger.info("Cleared all vectors from table: {}", tableName);
                 
             } catch (SQLException e) {
@@ -457,7 +476,7 @@ public class PgVectorStorage implements VectorStorage {
                  Statement stmt = conn.createStatement()) {
                 
                 ResultSet rs = stmt.executeQuery(
-                    String.format("SELECT COUNT(*) FROM %s", tableName)
+                    String.format("SELECT COUNT(*) FROM rag.%s", tableName)
                 );
                 
                 if (rs.next()) {
@@ -490,7 +509,7 @@ public class PgVectorStorage implements VectorStorage {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 String sql = String.format(
-                    "SELECT COUNT(*) > 0 FROM %s WHERE document_id = ?::uuid AND type = 'chunk'",
+                    "SELECT COUNT(*) > 0 FROM rag.%s WHERE document_id = ?::uuid AND type = 'chunk'",
                     tableName
                 );
                 

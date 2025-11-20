@@ -589,7 +589,6 @@ public class LightRAG {
                                 VectorStorage.VectorMetadata vectorMetadata = new VectorStorage.VectorMetadata(
                                     "chunk",
                                     batchChunks.get(i),
-                                    docId,  // sourceId (the document ID from LightRAG perspective)
                                     documentId,  // documentId (UUID from the document table)
                                     chunkIndex,
                                     projectId  // projectId (UUID from the project table)
@@ -845,7 +844,6 @@ public class LightRAG {
                 .entityName(entityName)
                 .entityType(entityType.isEmpty() ? "CONCEPT" : entityType)
                 .description(description)
-                .sourceId(sourceChunkId)
                 .build();
                 
         } catch (Exception e) {
@@ -883,7 +881,6 @@ public class LightRAG {
                 .tgtId(tgtId)
                 .description(description.isEmpty() ? "RELATED_TO" : description)
                 .keywords(keywords)
-                .sourceId(sourceChunkId)
                 .weight(1.0)
                 .build();
                 
@@ -1023,12 +1020,12 @@ public class LightRAG {
                     for (Entity entity : uniqueEntities.values()) {
                         if (i < embeddings.size()) {
                             String projectId = metadata != null ? (String) metadata.get("project_id") : null;
+                            String documentId = metadata != null ? (String) metadata.get("document_id") : null;
                             VectorStorage.VectorMetadata vectorMetadata = new VectorStorage.VectorMetadata(
                                 "entity",
                                 entity.getEntityName(),
-                                entity.getSourceId(),  // sourceId from entity
-                                null,  // documentId (entities are not directly tied to documents)
-                                null,  // chunkIndex (entities are not tied to specific chunks)
+                                documentId,  // documentId from metadata (links entity to source document)
+                                null,  // chunkIndex (entities are aggregated across chunks)
                                 projectId  // projectId (UUID from the project table)
                             );
                             

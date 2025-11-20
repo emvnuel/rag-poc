@@ -13,12 +13,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.resteasy.reactive.multipart.FileUpload;
@@ -166,5 +168,24 @@ public class DocumentResources {
     public String getContent(@PathParam("id") final UUID id) {
         final Document document = documentService.findById(id);
         return document.getContent();
+    }
+    
+    /**
+     * Deletes a document and all associated data (vectors and graph entities/relations).
+     * 
+     * @param id The document ID to delete
+     * @param projectId The project ID (required for graph cleanup)
+     * @return Response with no content (204) on success
+     */
+    @DELETE
+    @Path("/{id}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response delete(@PathParam("id") final UUID id, @QueryParam("projectId") final UUID projectId) {
+        if (projectId == null) {
+            throw new IllegalArgumentException("Project ID is required");
+        }
+        
+        documentService.delete(id, projectId);
+        return Response.noContent().build();
     }
 }

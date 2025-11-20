@@ -4,16 +4,16 @@
 -- Create schema for organization
 CREATE SCHEMA IF NOT EXISTS rag;
 
--- Projects table
-CREATE TABLE IF NOT EXISTS projects (
+-- Projects table (in rag schema)
+CREATE TABLE IF NOT EXISTS rag.projects (
     id UUID PRIMARY KEY,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     name VARCHAR(255) NOT NULL
 );
 
--- Documents table
-CREATE TABLE IF NOT EXISTS documents (
+-- Documents table (in rag schema)
+CREATE TABLE IF NOT EXISTS rag.documents (
     id UUID PRIMARY KEY,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
@@ -23,17 +23,18 @@ CREATE TABLE IF NOT EXISTS documents (
     content TEXT NOT NULL,
     metadata JSONB,
     project_id UUID NOT NULL,
-    CONSTRAINT fk_documents_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    CONSTRAINT fk_documents_project FOREIGN KEY (project_id) REFERENCES rag.projects(id) ON DELETE CASCADE
 );
 
 -- Indexes for documents table
-CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
-CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
-CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type);
+CREATE INDEX IF NOT EXISTS idx_documents_status ON rag.documents(status);
+CREATE INDEX IF NOT EXISTS idx_documents_project_id ON rag.documents(project_id);
+CREATE INDEX IF NOT EXISTS idx_documents_type ON rag.documents(type);
 
 -- Grant necessary permissions
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
+GRANT ALL PRIVILEGES ON SCHEMA rag TO postgres;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA rag TO postgres;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA rag TO postgres;
 
 -- Display success message
 DO $$

@@ -865,6 +865,6 @@ class EntityResolverTest {
      * Helper method to create test entities with default source ID.
      */
     private Entity createEntity(String name, String type, String description) {
-        return new Entity(name, type, description, "test-source-" + name.hashCode(), null);
+        return new Entity(name, type, description, "test-source-" + name.hashCode());
     }
 }

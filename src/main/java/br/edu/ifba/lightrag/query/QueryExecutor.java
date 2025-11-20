@@ -183,7 +183,7 @@ public abstract class QueryExecutor {
                 metadata.content(),                   // content
                 result.score(),                       // relevanceScore
                 metadata.documentId(),                // documentId (UUID from document table)
-                metadata.sourceId(),                  // sourceId (LightRAG doc ID)
+                metadata.documentId(),                // sourceId (same as documentId)
                 metadata.chunkIndex(),                // chunkIndex
                 metadata.type()                       // type (e.g., "chunk", "entity")
             ));

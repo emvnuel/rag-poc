@@ -24,13 +24,29 @@ public final class Entity {
     @NotNull
     private final String description;
     
-    @JsonProperty("source_id")
-    @Nullable
-    private final String sourceId;
-    
     @JsonProperty("file_path")
     @Nullable
     private final String filePath;
+    
+    @JsonProperty("document_id")
+    @Nullable
+    private final String documentId;
+    
+    /**
+     * Constructs a new Entity (backward compatible constructor).
+     *
+     * @param entityName the unique name of the entity (required)
+     * @param entityType the type/category of the entity (optional)
+     * @param description detailed description of the entity (required)
+     * @param filePath the file path of the source document (optional)
+     */
+    public Entity(
+            @NotNull String entityName,
+            @Nullable String entityType,
+            @NotNull String description,
+            @Nullable String filePath) {
+        this(entityName, entityType, description, filePath, null);
+    }
     
     /**
      * Constructs a new Entity.
@@ -38,20 +54,20 @@ public final class Entity {
      * @param entityName the unique name of the entity (required)
      * @param entityType the type/category of the entity (optional)
      * @param description detailed description of the entity (required)
-     * @param sourceId the ID of the source document (optional)
      * @param filePath the file path of the source document (optional)
+     * @param documentId the document UUID that this entity was extracted from (optional)
      */
     public Entity(
             @NotNull String entityName,
             @Nullable String entityType,
             @NotNull String description,
-            @Nullable String sourceId,
-            @Nullable String filePath) {
+            @Nullable String filePath,
+            @Nullable String documentId) {
         this.entityName = Objects.requireNonNull(entityName, "entityName must not be null");
         this.entityType = entityType;
         this.description = Objects.requireNonNull(description, "description must not be null");
-        this.sourceId = sourceId;
         this.filePath = filePath;
+        this.documentId = documentId;
     }
     
     @NotNull
@@ -70,27 +86,27 @@ public final class Entity {
     }
     
     @Nullable
-    public String getSourceId() {
-        return sourceId;
+    public String getFilePath() {
+        return filePath;
     }
     
     @Nullable
-    public String getFilePath() {
-        return filePath;
+    public String getDocumentId() {
+        return documentId;
     }
     
     /**
      * Creates a new Entity with updated description.
      */
     public Entity withDescription(@NotNull String newDescription) {
-        return new Entity(entityName, entityType, newDescription, sourceId, filePath);
+        return new Entity(entityName, entityType, newDescription, filePath, documentId);
     }
     
     /**
      * Creates a new Entity with updated entity name.
      */
     public Entity withEntityName(@NotNull String newEntityName) {
-        return new Entity(newEntityName, entityType, description, sourceId, filePath);
+        return new Entity(newEntityName, entityType, description, filePath, documentId);
     }
     
     @Override
@@ -101,13 +117,13 @@ public final class Entity {
         return Objects.equals(entityName, entity.entityName) &&
                Objects.equals(entityType, entity.entityType) &&
                Objects.equals(description, entity.description) &&
-               Objects.equals(sourceId, entity.sourceId) &&
-               Objects.equals(filePath, entity.filePath);
+               Objects.equals(filePath, entity.filePath) &&
+               Objects.equals(documentId, entity.documentId);
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(entityName, entityType, description, sourceId, filePath);
+        return Objects.hash(entityName, entityType, description, filePath, documentId);
     }
     
     @Override
@@ -116,8 +132,8 @@ public final class Entity {
                 "entityName='" + entityName + '\'' +
                 ", entityType='" + entityType + '\'' +
                 ", description='" + description + '\'' +
-                ", sourceId='" + sourceId + '\'' +
                 ", filePath='" + filePath + '\'' +
+                ", documentId='" + documentId + '\'' +
                 '}';
     }
     
@@ -128,8 +144,8 @@ public final class Entity {
         private String entityName;
         private String entityType;
         private String description;
-        private String sourceId;
         private String filePath;
+        private String documentId;
         
         public Builder entityName(@NotNull String entityName) {
             this.entityName = entityName;
@@ -146,18 +162,18 @@ public final class Entity {
             return this;
         }
         
-        public Builder sourceId(@Nullable String sourceId) {
-            this.sourceId = sourceId;
-            return this;
-        }
-        
         public Builder filePath(@Nullable String filePath) {
             this.filePath = filePath;
             return this;
         }
         
+        public Builder documentId(@Nullable String documentId) {
+            this.documentId = documentId;
+            return this;
+        }
+        
         public Entity build() {
-            return new Entity(entityName, entityType, description, sourceId, filePath);
+            return new Entity(entityName, entityType, description, filePath, documentId);
         }
     }
     

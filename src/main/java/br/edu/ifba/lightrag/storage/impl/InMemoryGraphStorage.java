@@ -231,26 +231,18 @@ public class InMemoryGraphStorage implements GraphStorage {
         return CompletableFuture.supplyAsync(() -> {
             int count = 0;
             
-            // Find and delete entities with this source ID
-            List<String> entitiesToDelete = entities.values().stream()
-                .filter(e -> sourceId.equals(e.getSourceId()))
-                .map(Entity::getEntityName)
-                .toList();
+            // Note: source_id no longer exists, deleteBySourceId is deprecated
+            // This method is kept for interface compatibility but performs no operation
+            logger.warn("deleteBySourceId is deprecated and no longer supported");
+            List<String> entitiesToDelete = List.of();
             
             for (String entityName : entitiesToDelete) {
                 deleteEntity(projectId, entityName).join();
                 count++;
             }
             
-            // Find and delete relations with this source ID
-            List<Relation> relationsToDelete = new ArrayList<>();
-            for (ConcurrentHashMap<String, Relation> targets : outgoingEdges.values()) {
-                for (Relation relation : targets.values()) {
-                    if (sourceId.equals(relation.getSourceId())) {
-                        relationsToDelete.add(relation);
-                    }
-                }
-            }
+            // Note: source_id no longer exists, deleteBySourceId is deprecated
+            List<Relation> relationsToDelete = List.of();
             
             for (Relation relation : relationsToDelete) {
                 deleteRelation(projectId, relation.getSrcId(), relation.getTgtId()).join();

@@ -107,7 +107,6 @@ public interface VectorStorage extends AutoCloseable {
     record VectorMetadata(
             @NotNull String type,
             @NotNull String content,
-            String sourceId,
             String documentId,
             Integer chunkIndex,
             String projectId) {

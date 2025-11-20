@@ -97,8 +97,8 @@ class AgeGraphStorageTest {
     @Test
     void testEntitiesIsolatedBetweenProjects() {
         // Create same entity in both projects
-        final Entity entity1 = new Entity("Apple Inc.", "Company", "Tech company", null, null);
-        final Entity entity2 = new Entity("Apple Inc.", "Company", "Tech company", null, null);
+        final Entity entity1 = new Entity("Apple Inc.", "Company", "Tech company", null);
+        final Entity entity2 = new Entity("Apple Inc.", "Company", "Tech company", null);
 
         graphStorage.upsertEntity(projectId1, entity1).join();
         graphStorage.upsertEntity(projectId2, entity2).join();
@@ -117,7 +117,7 @@ class AgeGraphStorageTest {
         assertNotNull(queriedFromProject2, "Project 2 should have its own Apple Inc.");
 
         // Add different entity to project 2
-        final Entity entity3 = new Entity("Google Inc.", "Company", "Tech company", null, null);
+        final Entity entity3 = new Entity("Google Inc.", "Company", "Tech company", null);
         graphStorage.upsertEntity(projectId2, entity3).join();
 
         // Verify project 1 doesn't see Google
@@ -142,26 +142,26 @@ class AgeGraphStorageTest {
     @Test
     void testRelationsIsolatedBetweenProjects() {
         // Project 1: Create entities A, B, C
-        final Entity entityA1 = new Entity("EntityA", "Person", "Person A", null, null);
-        final Entity entityB1 = new Entity("EntityB", "Person", "Person B", null, null);
-        final Entity entityC1 = new Entity("EntityC", "Person", "Person C", null, null);
+        final Entity entityA1 = new Entity("EntityA", "Person", "Person A", null);
+        final Entity entityB1 = new Entity("EntityB", "Person", "Person B", null);
+        final Entity entityC1 = new Entity("EntityC", "Person", "Person C", null);
 
         graphStorage.upsertEntities(projectId1, List.of(entityA1, entityB1, entityC1)).join();
 
         // Project 2: Create entities A, B
-        final Entity entityA2 = new Entity("EntityA", "Person", "Person A", null, null);
-        final Entity entityB2 = new Entity("EntityB", "Person", "Person B", null, null);
+        final Entity entityA2 = new Entity("EntityA", "Person", "Person A", null);
+        final Entity entityB2 = new Entity("EntityB", "Person", "Person B", null);
 
         graphStorage.upsertEntities(projectId2, List.of(entityA2, entityB2)).join();
 
         // Project 1: Add relations A -> B and B -> C
-        final Relation relation1A = new Relation("EntityA", "EntityB", "A knows B", "knows", 1.0, null, null);
-        final Relation relation1B = new Relation("EntityB", "EntityC", "B knows C", "knows", 1.0, null, null);
+        final Relation relation1A = new Relation("EntityA", "EntityB", "A knows B", "knows", 1.0, null);
+        final Relation relation1B = new Relation("EntityB", "EntityC", "B knows C", "knows", 1.0, null);
 
         graphStorage.upsertRelations(projectId1, List.of(relation1A, relation1B)).join();
 
         // Project 2: Add relation A -> B only
-        final Relation relation2 = new Relation("EntityA", "EntityB", "A knows B", "knows", 1.0, null, null);
+        final Relation relation2 = new Relation("EntityA", "EntityB", "A knows B", "knows", 1.0, null);
 
         graphStorage.upsertRelation(projectId2, relation2).join();
 
@@ -195,14 +195,14 @@ class AgeGraphStorageTest {
     @Test
     void testEntityDeduplicationWithinProjectOnly() {
         // Project 1: Insert Apple Inc. twice
-        final Entity entity1A = new Entity("Apple Inc.", "Company", "Tech company", "source1", null);
-        final Entity entity1B = new Entity("Apple Inc.", "Company", "Tech company updated", "source2", null);
+        final Entity entity1A = new Entity("Apple Inc.", "Company", "Tech company", null);
+        final Entity entity1B = new Entity("Apple Inc.", "Company", "Tech company updated", null);
 
         graphStorage.upsertEntity(projectId1, entity1A).join();
         graphStorage.upsertEntity(projectId1, entity1B).join();
 
         // Project 2: Insert Apple Inc. once
-        final Entity entity2 = new Entity("Apple Inc.", "Company", "Different description", "source3", null);
+        final Entity entity2 = new Entity("Apple Inc.", "Company", "Different description", null);
         graphStorage.upsertEntity(projectId2, entity2).join();
 
         // Verify Project 1 has 1 deduplicated entity
@@ -229,13 +229,13 @@ class AgeGraphStorageTest {
     @Test
     void testCrossProjectQueryReturnsEmpty() {
         // Add entities to Project 1 only
-        final Entity entity1 = new Entity("Company1", "Company", "First company", null, null);
-        final Entity entity2 = new Entity("Company2", "Company", "Second company", null, null);
+        final Entity entity1 = new Entity("Company1", "Company", "First company", null);
+        final Entity entity2 = new Entity("Company2", "Company", "Second company", null);
 
         graphStorage.upsertEntities(projectId1, List.of(entity1, entity2)).join();
 
         // Add relation in Project 1
-        final Relation relation = new Relation("Company1", "Company2", "Partnership", "partners", 1.0, null, null);
+        final Relation relation = new Relation("Company1", "Company2", "Partnership", "partners", 1.0, null);
         graphStorage.upsertRelation(projectId1, relation).join();
 
         // Verify Project 1 has data
@@ -269,12 +269,12 @@ class AgeGraphStorageTest {
     @Test
     void testDeleteProjectRemovesAllGraphData() {
         // Add data to Project 1
-        final Entity entity1 = new Entity("EntityX", "Type", "Description", null, null);
-        final Entity entity2 = new Entity("EntityY", "Type", "Description", null, null);
+        final Entity entity1 = new Entity("EntityX", "Type", "Description", null);
+        final Entity entity2 = new Entity("EntityY", "Type", "Description", null);
 
         graphStorage.upsertEntities(projectId1, List.of(entity1, entity2)).join();
 
-        final Relation relation = new Relation("EntityX", "EntityY", "Related", "related", 1.0, null, null);
+        final Relation relation = new Relation("EntityX", "EntityY", "Related", "related", 1.0, null);
         graphStorage.upsertRelation(projectId1, relation).join();
 
         // Verify data exists
@@ -323,7 +323,7 @@ class AgeGraphStorageTest {
         assertFalse(exists, "Non-existent project graph should not exist");
 
         // Verify operations throw CompletionException wrapping IllegalStateException
-        final Entity testEntity = new Entity("Test", "Type", "Description", null, null);
+        final Entity testEntity = new Entity("Test", "Type", "Description", null);
 
         final CompletionException upsertEx = assertThrows(CompletionException.class, () -> {
             graphStorage.upsertEntity(nonExistentProjectId, testEntity).join();
@@ -350,20 +350,20 @@ class AgeGraphStorageTest {
     @Test
     void testGraphStatsAreProjectSpecific() {
         // Add 3 entities to Project 1
-        final Entity e1 = new Entity("E1", "Type", "Desc1", null, null);
-        final Entity e2 = new Entity("E2", "Type", "Desc2", null, null);
-        final Entity e3 = new Entity("E3", "Type", "Desc3", null, null);
+        final Entity e1 = new Entity("E1", "Type", "Desc1", null);
+        final Entity e2 = new Entity("E2", "Type", "Desc2", null);
+        final Entity e3 = new Entity("E3", "Type", "Desc3", null);
 
         graphStorage.upsertEntities(projectId1, List.of(e1, e2, e3)).join();
 
         // Add 2 relations to Project 1
-        final Relation r1 = new Relation("E1", "E2", "R1", "related", 1.0, null, null);
-        final Relation r2 = new Relation("E2", "E3", "R2", "related", 1.0, null, null);
+        final Relation r1 = new Relation("E1", "E2", "R1", "related", 1.0, null);
+        final Relation r2 = new Relation("E2", "E3", "R2", "related", 1.0, null);
 
         graphStorage.upsertRelations(projectId1, List.of(r1, r2)).join();
 
         // Add 1 entity to Project 2
-        final Entity e4 = new Entity("E4", "Type", "Desc4", null, null);
+        final Entity e4 = new Entity("E4", "Type", "Desc4", null);
         graphStorage.upsertEntity(projectId2, e4).join();
 
         // Get stats for both projects

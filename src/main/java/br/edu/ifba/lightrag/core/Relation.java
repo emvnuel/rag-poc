@@ -31,13 +31,33 @@ public final class Relation {
     @JsonProperty("weight")
     private final double weight;
     
-    @JsonProperty("source_id")
-    @Nullable
-    private final String sourceId;
-    
     @JsonProperty("file_path")
     @Nullable
     private final String filePath;
+    
+    @JsonProperty("document_id")
+    @Nullable
+    private final String documentId;
+    
+    /**
+     * Constructs a new Relation (backward compatible constructor).
+     *
+     * @param srcId the source entity ID (required)
+     * @param tgtId the target entity ID (required)
+     * @param description detailed description of the relationship (required)
+     * @param keywords keywords describing the relationship (required)
+     * @param weight the strength/importance of the relationship (default: 1.0)
+     * @param filePath the file path of the source document (optional)
+     */
+    public Relation(
+            @NotNull String srcId,
+            @NotNull String tgtId,
+            @NotNull String description,
+            @NotNull String keywords,
+            double weight,
+            @Nullable String filePath) {
+        this(srcId, tgtId, description, keywords, weight, filePath, null);
+    }
     
     /**
      * Constructs a new Relation.
@@ -47,8 +67,8 @@ public final class Relation {
      * @param description detailed description of the relationship (required)
      * @param keywords keywords describing the relationship (required)
      * @param weight the strength/importance of the relationship (default: 1.0)
-     * @param sourceId the ID of the source document (optional)
      * @param filePath the file path of the source document (optional)
+     * @param documentId the document UUID that this relation was extracted from (optional)
      */
     public Relation(
             @NotNull String srcId,
@@ -56,15 +76,15 @@ public final class Relation {
             @NotNull String description,
             @NotNull String keywords,
             double weight,
-            @Nullable String sourceId,
-            @Nullable String filePath) {
+            @Nullable String filePath,
+            @Nullable String documentId) {
         this.srcId = Objects.requireNonNull(srcId, "srcId must not be null");
         this.tgtId = Objects.requireNonNull(tgtId, "tgtId must not be null");
         this.description = Objects.requireNonNull(description, "description must not be null");
         this.keywords = Objects.requireNonNull(keywords, "keywords must not be null");
         this.weight = weight;
-        this.sourceId = sourceId;
         this.filePath = filePath;
+        this.documentId = documentId;
     }
     
     @NotNull
@@ -92,27 +112,27 @@ public final class Relation {
     }
     
     @Nullable
-    public String getSourceId() {
-        return sourceId;
+    public String getFilePath() {
+        return filePath;
     }
     
     @Nullable
-    public String getFilePath() {
-        return filePath;
+    public String getDocumentId() {
+        return documentId;
     }
     
     /**
      * Creates a new Relation with updated description.
      */
     public Relation withDescription(@NotNull String newDescription) {
-        return new Relation(srcId, tgtId, newDescription, keywords, weight, sourceId, filePath);
+        return new Relation(srcId, tgtId, newDescription, keywords, weight, filePath, documentId);
     }
     
     /**
      * Creates a new Relation with updated weight.
      */
     public Relation withWeight(double newWeight) {
-        return new Relation(srcId, tgtId, description, keywords, newWeight, sourceId, filePath);
+        return new Relation(srcId, tgtId, description, keywords, newWeight, filePath, documentId);
     }
     
     /**
@@ -137,13 +157,13 @@ public final class Relation {
                Objects.equals(tgtId, relation.tgtId) &&
                Objects.equals(description, relation.description) &&
                Objects.equals(keywords, relation.keywords) &&
-               Objects.equals(sourceId, relation.sourceId) &&
-               Objects.equals(filePath, relation.filePath);
+               Objects.equals(filePath, relation.filePath) &&
+               Objects.equals(documentId, relation.documentId);
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(srcId, tgtId, description, keywords, weight, sourceId, filePath);
+        return Objects.hash(srcId, tgtId, description, keywords, weight, filePath, documentId);
     }
     
     @Override
@@ -154,8 +174,8 @@ public final class Relation {
                 ", description='" + description + '\'' +
                 ", keywords='" + keywords + '\'' +
                 ", weight=" + weight +
-                ", sourceId='" + sourceId + '\'' +
                 ", filePath='" + filePath + '\'' +
+                ", documentId='" + documentId + '\'' +
                 '}';
     }
     
@@ -168,8 +188,8 @@ public final class Relation {
         private String description;
         private String keywords;
         private double weight = 1.0;
-        private String sourceId;
         private String filePath;
+        private String documentId;
         
         public Builder srcId(@NotNull String srcId) {
             this.srcId = srcId;
@@ -196,18 +216,18 @@ public final class Relation {
             return this;
         }
         
-        public Builder sourceId(@Nullable String sourceId) {
-            this.sourceId = sourceId;
-            return this;
-        }
-        
         public Builder filePath(@Nullable String filePath) {
             this.filePath = filePath;
             return this;
         }
         
+        public Builder documentId(@Nullable String documentId) {
+            this.documentId = documentId;
+            return this;
+        }
+        
         public Relation build() {
-            return new Relation(srcId, tgtId, description, keywords, weight, sourceId, filePath);
+            return new Relation(srcId, tgtId, description, keywords, weight, filePath, documentId);
         }
     }
     

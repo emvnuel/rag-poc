@@ -21,7 +21,7 @@ BEGIN;
 -- Step 1: Drop the existing HNSW index (required before altering column type)
 DO $$
 BEGIN
-    DROP INDEX IF EXISTS ag_catalog.lightrag_vectors_vector_idx;
+    DROP INDEX IF EXISTS rag.lightrag_vectors_vector_idx;
     RAISE NOTICE '[1/4] Dropped existing HNSW vector index';
 EXCEPTION
     WHEN undefined_table THEN
@@ -38,8 +38,8 @@ DO $$
 DECLARE
     row_count INTEGER;
 BEGIN
-    SELECT COUNT(*) INTO row_count FROM ag_catalog.lightrag_vectors;
-    TRUNCATE TABLE ag_catalog.lightrag_vectors CASCADE;
+    SELECT COUNT(*) INTO row_count FROM rag.lightrag_vectors;
+    TRUNCATE TABLE rag.lightrag_vectors CASCADE;
     RAISE NOTICE '[2/4] Truncated table (removed % vectors - will be regenerated)', row_count;
 END
 $$;
@@ -47,7 +47,7 @@ $$;
 -- Step 3: Alter the vector column to use halfvec(4000)
 DO $$
 BEGIN
-    ALTER TABLE ag_catalog.lightrag_vectors 
+    ALTER TABLE rag.lightrag_vectors 
         ALTER COLUMN vector TYPE halfvec(4000);
     RAISE NOTICE '[3/4] Changed vector column type to halfvec(4000)';
 EXCEPTION
@@ -63,7 +63,7 @@ $$;
 DO $$
 BEGIN
     CREATE INDEX lightrag_vectors_vector_idx 
-        ON ag_catalog.lightrag_vectors 
+        ON rag.lightrag_vectors 
         USING hnsw (vector halfvec_cosine_ops)
         WITH (m = 16, ef_construction = 64);
     RAISE NOTICE '[4/4] Created HNSW index with halfvec_cosine_ops';

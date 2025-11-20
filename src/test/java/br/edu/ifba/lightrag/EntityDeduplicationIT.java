@@ -67,9 +67,9 @@ class EntityDeduplicationIT {
 
         // Create entities with exact duplicate names
         List<Entity> entities = List.of(
-            new Entity("Warren Home", "ORGANIZATION", "A mental health facility", null, null),
-            new Entity("Warren Home", "ORGANIZATION", "Provided care services", null, null),
-            new Entity("Warren Home", "ORGANIZATION", "Located in Pennsylvania", null, null)
+            new Entity("Warren Home", "ORGANIZATION", "A mental health facility", null),
+            new Entity("Warren Home", "ORGANIZATION", "Provided care services", null),
+            new Entity("Warren Home", "ORGANIZATION", "Located in Pennsylvania", null)
         );
 
         // Resolve duplicates
@@ -96,14 +96,10 @@ class EntityDeduplicationIT {
         LOG.info("Testing substring variation detection");
 
         List<Entity> entities = List.of(
-            new Entity("Warren State Home and Training School", "ORGANIZATION", 
-                "Established in 1907", null, null),
-            new Entity("Warren Home", "ORGANIZATION", 
-                "Provided care for mentally disabled", null, null),
-            new Entity("Warren State Home", "ORGANIZATION", 
-                "Located in Pennsylvania", null, null),
-            new Entity("Warren Home School", "ORGANIZATION", 
-                "Offered educational programs", null, null)
+            new Entity("Warren State Home and Training School", "ORGANIZATION", "Established in 1907", null),
+            new Entity("Warren Home", "ORGANIZATION", "Provided care for mentally disabled", null),
+            new Entity("Warren State Home", "ORGANIZATION", "Located in Pennsylvania", null),
+            new Entity("Warren Home School", "ORGANIZATION", "Offered educational programs", null)
         );
 
         List<Entity> resolved = entityResolver.resolveDuplicates(entities, testProjectId.toString());
@@ -131,14 +127,10 @@ class EntityDeduplicationIT {
         LOG.info("Testing type-aware matching");
 
         List<Entity> entities = List.of(
-            new Entity("Apple Inc.", "ORGANIZATION", 
-                "Technology company", null, null),
-            new Entity("Apple", "ORGANIZATION", 
-                "Manufacturer of iPhone", null, null),
-            new Entity("apple", "FOOD", 
-                "Nutritious fruit", null, null),
-            new Entity("Red apple", "FOOD", 
-                "Popular variety", null, null)
+            new Entity("Apple Inc.", "ORGANIZATION", "Technology company", null),
+            new Entity("Apple", "ORGANIZATION", "Manufacturer of iPhone", null),
+            new Entity("apple", "FOOD", "Nutritious fruit", null),
+            new Entity("Red apple", "FOOD", "Popular variety", null)
         );
 
         List<Entity> resolved = entityResolver.resolveDuplicates(entities, testProjectId.toString());
@@ -169,12 +161,9 @@ class EntityDeduplicationIT {
         LOG.info("Testing person name variations");
 
         List<Entity> entities = List.of(
-            new Entity("James Gordon", "PERSON", 
-                "Police commissioner", null, null),
-            new Entity("Jim Gordon", "PERSON", 
-                "Works with Batman", null, null),
-            new Entity("Commissioner Gordon", "PERSON", 
-                "Leader of GCPD", null, null)
+            new Entity("James Gordon", "PERSON", "Police commissioner", null),
+            new Entity("Jim Gordon", "PERSON", "Works with Batman", null),
+            new Entity("Commissioner Gordon", "PERSON", "Leader of GCPD", null)
         );
 
         List<Entity> resolved = entityResolver.resolveDuplicates(entities, testProjectId.toString());
@@ -198,10 +187,8 @@ class EntityDeduplicationIT {
         LOG.info("Testing different entities remain separate");
 
         List<Entity> entities = List.of(
-            new Entity("Warren Home", "ORGANIZATION", 
-                "Located in Pennsylvania", null, null),
-            new Entity("Warwick Home", "ORGANIZATION", 
-                "Located in New York", null, null)
+            new Entity("Warren Home", "ORGANIZATION", "Located in Pennsylvania", null),
+            new Entity("Warwick Home", "ORGANIZATION", "Located in New York", null)
         );
 
         List<Entity> resolved = entityResolver.resolveDuplicates(entities, testProjectId.toString());
@@ -232,10 +219,10 @@ class EntityDeduplicationIT {
         LOG.info("Testing resolution statistics tracking");
 
         List<Entity> entities = List.of(
-            new Entity("Warren Home", "ORGANIZATION", "Facility 1", null, null),
-            new Entity("Warren Home", "ORGANIZATION", "Facility 2", null, null),
-            new Entity("Warren State Home", "ORGANIZATION", "Facility 3", null, null),
-            new Entity("Different Place", "ORGANIZATION", "Unrelated", null, null)
+            new Entity("Warren Home", "ORGANIZATION", "Facility 1", null),
+            new Entity("Warren Home", "ORGANIZATION", "Facility 2", null),
+            new Entity("Warren State Home", "ORGANIZATION", "Facility 3", null),
+            new Entity("Different Place", "ORGANIZATION", "Unrelated", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -282,7 +269,7 @@ class EntityDeduplicationIT {
         LOG.info("Testing single entity handling");
 
         List<Entity> single = List.of(
-            new Entity("Unique Entity", "ORGANIZATION", "No duplicates", null, null)
+            new Entity("Unique Entity", "ORGANIZATION", "No duplicates", null)
         );
 
         List<Entity> resolved = entityResolver.resolveDuplicates(single, testProjectId.toString());
@@ -308,12 +295,12 @@ class EntityDeduplicationIT {
         // Create 100 entities with ~30% duplicates
         List<Entity> entities = new ArrayList<>();
         for (int i = 0; i < 70; i++) {
-            entities.add(new Entity("Entity_" + i, "ORGANIZATION", "Unique entity " + i, null, null));
+            entities.add(new Entity("Entity_" + i, "ORGANIZATION", "Unique entity " + i, null));
         }
         // Add 30 duplicates of first 15 entities
         for (int i = 0; i < 15; i++) {
-            entities.add(new Entity("Entity_" + i, "ORGANIZATION", "Duplicate of entity " + i, null, null));
-            entities.add(new Entity("Entity_" + i, "ORGANIZATION", "Another duplicate " + i, null, null));
+            entities.add(new Entity("Entity_" + i, "ORGANIZATION", "Duplicate of entity " + i, null));
+            entities.add(new Entity("Entity_" + i, "ORGANIZATION", "Another duplicate " + i, null));
         }
 
         long startTime = System.currentTimeMillis();
@@ -344,7 +331,7 @@ class EntityDeduplicationIT {
         LOG.info("Testing null entity name handling");
 
         assertThrows(NullPointerException.class, () -> {
-            new Entity(null, "ORGANIZATION", "Description", null, null);
+            new Entity(null, "ORGANIZATION", "Description", null);
         }, "Entity constructor should throw for null name");
 
         LOG.info("Null entity name handling test passed");
@@ -360,7 +347,7 @@ class EntityDeduplicationIT {
         LOG.info("Testing null description handling");
 
         assertThrows(NullPointerException.class, () -> {
-            new Entity("Entity Name", "ORGANIZATION", null, null, null);
+            new Entity("Entity Name", "ORGANIZATION", null, null);
         }, "Entity constructor should throw for null description");
 
         LOG.info("Null description handling test passed");
@@ -378,8 +365,8 @@ class EntityDeduplicationIT {
         LOG.info("Testing null type fallback handling");
 
         List<Entity> entities = List.of(
-            new Entity("Entity A", null, "Description A", null, null),
-            new Entity("Entity A", null, "Description B", null, null)
+            new Entity("Entity A", null, "Description A", null),
+            new Entity("Entity A", null, "Description B", null)
         );
 
         // EntityResolver catches validation errors and returns original entities as fallback
@@ -406,10 +393,8 @@ class EntityDeduplicationIT {
         LOG.info("Testing abbreviation detection");
 
         List<Entity> entities = List.of(
-            new Entity("Massachusetts Institute of Technology", "ORGANIZATION", 
-                "Founded in 1861", null, null),
-            new Entity("MIT", "ORGANIZATION", 
-                "A renowned university", null, null)
+            new Entity("Massachusetts Institute of Technology", "ORGANIZATION", "Founded in 1861", null),
+            new Entity("MIT", "ORGANIZATION", "A renowned university", null)
         );
 
         List<Entity> resolved = entityResolver.resolveDuplicates(entities, testProjectId.toString());
@@ -437,12 +422,9 @@ class EntityDeduplicationIT {
         LOG.info("Testing Mercury planet vs chemical element type-aware matching");
 
         List<Entity> entities = List.of(
-            new Entity("Mercury", "PLANET", 
-                "The closest planet to the Sun", null, null),
-            new Entity("Mercury", "CHEMICAL_ELEMENT", 
-                "A chemical element with symbol Hg", null, null),
-            new Entity("Mercury", "PLANET", 
-                "First planet from the Sun", null, null)
+            new Entity("Mercury", "PLANET", "The closest planet to the Sun", null),
+            new Entity("Mercury", "CHEMICAL_ELEMENT", "A chemical element with symbol Hg", null),
+            new Entity("Mercury", "PLANET", "First planet from the Sun", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -476,12 +458,9 @@ class EntityDeduplicationIT {
         LOG.info("Testing Washington person vs location type-aware matching");
 
         List<Entity> entities = List.of(
-            new Entity("Washington", "PERSON", 
-                "George Washington, first US president", null, null),
-            new Entity("Washington", "LOCATION", 
-                "The capital of the United States", null, null),
-            new Entity("George Washington", "PERSON", 
-                "Founding father and first president", null, null)
+            new Entity("Washington", "PERSON", "George Washington, first US president", null),
+            new Entity("Washington", "LOCATION", "The capital of the United States", null),
+            new Entity("George Washington", "PERSON", "Founding father and first president", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -514,12 +493,9 @@ class EntityDeduplicationIT {
         LOG.info("Testing Jordan person vs country type-aware matching");
 
         List<Entity> entities = List.of(
-            new Entity("Michael Jordan", "PERSON", 
-                "Famous basketball player", null, null),
-            new Entity("Jordan", "GEO", 
-                "A country in the Middle East", null, null),
-            new Entity("Jordan", "PERSON", 
-                "Basketball legend", null, null)
+            new Entity("Michael Jordan", "PERSON", "Famous basketball player", null),
+            new Entity("Jordan", "GEO", "A country in the Middle East", null),
+            new Entity("Jordan", "PERSON", "Basketball legend", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -553,14 +529,10 @@ class EntityDeduplicationIT {
         LOG.info("Testing Java across multiple types should not merge");
 
         List<Entity> entities = List.of(
-            new Entity("Java", "PROGRAMMING_LANGUAGE", 
-                "Object-oriented programming language", null, null),
-            new Entity("Java", "GEO", 
-                "Indonesian island", null, null),
-            new Entity("Java", "PRODUCT", 
-                "Coffee brand", null, null),
-            new Entity("Java", "ORGANIZATION", 
-                "Software company named Java", null, null)
+            new Entity("Java", "PROGRAMMING_LANGUAGE", "Object-oriented programming language", null),
+            new Entity("Java", "GEO", "Indonesian island", null),
+            new Entity("Java", "PRODUCT", "Coffee brand", null),
+            new Entity("Java", "ORGANIZATION", "Software company named Java", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -591,18 +563,18 @@ class EntityDeduplicationIT {
 
         List<Entity> entities = List.of(
             // Apple organizations (should merge)
-            new Entity("Apple", "ORGANIZATION", "Tech company", null, null),
-            new Entity("Apple Inc", "ORGANIZATION", "Cupertino company", null, null),
-            new Entity("Apple Inc.", "ORGANIZATION", "iPhone maker", null, null),
+            new Entity("Apple", "ORGANIZATION", "Tech company", null),
+            new Entity("Apple Inc", "ORGANIZATION", "Cupertino company", null),
+            new Entity("Apple Inc.", "ORGANIZATION", "iPhone maker", null),
             // Apple products (should NOT merge with organizations)
-            new Entity("Apple", "PRODUCT", "Red fruit", null, null),
-            new Entity("apple", "PRODUCT", "Green fruit", null, null),
+            new Entity("Apple", "PRODUCT", "Red fruit", null),
+            new Entity("apple", "PRODUCT", "Green fruit", null),
             // Orange organization
-            new Entity("Orange", "ORGANIZATION", "Telecom company", null, null),
+            new Entity("Orange", "ORGANIZATION", "Telecom company", null),
             // Orange product
-            new Entity("Orange", "PRODUCT", "Citrus fruit", null, null),
+            new Entity("Orange", "PRODUCT", "Citrus fruit", null),
             // Person
-            new Entity("Steve Jobs", "PERSON", "Apple founder", null, null)
+            new Entity("Steve Jobs", "PERSON", "Apple founder", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -649,9 +621,9 @@ class EntityDeduplicationIT {
         LOG.info("Testing type-aware matching with detailed statistics");
 
         List<Entity> entities = List.of(
-            new Entity("Mercury", "PLANET", "Planet description", null, null),
-            new Entity("Mercury", "CHEMICAL_ELEMENT", "Element description", null, null),
-            new Entity("Mercury", "PERSON", "Roman god", null, null)
+            new Entity("Mercury", "PLANET", "Planet description", null),
+            new Entity("Mercury", "CHEMICAL_ELEMENT", "Element description", null),
+            new Entity("Mercury", "PERSON", "Roman god", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(
@@ -690,10 +662,10 @@ class EntityDeduplicationIT {
         LOG.info("Testing case-insensitive type matching in integration");
 
         List<Entity> entities = List.of(
-            new Entity("Microsoft", "organization", "Tech company", null, null),
-            new Entity("Microsoft", "ORGANIZATION", "Software company", null, null),
-            new Entity("Microsoft", "Organization", "Redmond company", null, null),
-            new Entity("Microsoft", "PRODUCT", "Software product", null, null)
+            new Entity("Microsoft", "organization", "Tech company", null),
+            new Entity("Microsoft", "ORGANIZATION", "Software company", null),
+            new Entity("Microsoft", "Organization", "Redmond company", null),
+            new Entity("Microsoft", "PRODUCT", "Software product", null)
         );
 
         EntityResolutionResult result = entityResolver.resolveDuplicatesWithStats(

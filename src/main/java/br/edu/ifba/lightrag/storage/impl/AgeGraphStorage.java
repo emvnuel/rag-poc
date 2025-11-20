@@ -309,7 +309,7 @@ public class AgeGraphStorage implements GraphStorage {
             try (Connection conn = config.getConnection()) {
                 conn.setAutoCommit(false);
                 
-                // FIX: MERGE only on 'name' to avoid duplicates across different source_ids
+                // FIX: MERGE only on 'name' to avoid duplicates within the same project
                 // Since AGE doesn't support ON CREATE SET, we use MERGE on name only
                 // Properties may get updated but entity deduplication is preserved
                 // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
@@ -317,11 +317,12 @@ public class AgeGraphStorage implements GraphStorage {
                 String normalizedName = normalizeEntityName(entity.getEntityName());
                 String mergeCypher = String.format(
                     "MERGE (e:Entity {name: '%s'}) " +
-                    "SET e.entity_type = '%s', e.description = '%s' " +
+                    "SET e.entity_type = '%s', e.description = '%s', e.document_id = %s " +
                     "RETURN e",
                     escapeCypher(normalizedName),
                     escapeCypher(entity.getEntityType()),
-                    escapeCypher(entity.getDescription())
+                    escapeCypher(entity.getDescription()),
+                    entity.getDocumentId() != null ? "'" + escapeCypher(entity.getDocumentId()) + "'" : "null"
                 );
                 logger.debug("Executing MERGE for entity '{}' (original: '{}') on graph {} for project {}: {}", 
                     normalizedName, entity.getEntityName(), graphName, projectId, mergeCypher);
@@ -349,7 +350,7 @@ public class AgeGraphStorage implements GraphStorage {
             try (Connection conn = config.getConnection()) {
                 conn.setAutoCommit(false);
                 
-                // FIX: MERGE only on 'name' to avoid duplicates across different source_ids
+                // FIX: MERGE only on 'name' to avoid duplicates within the same project
                 // Since AGE doesn't support ON CREATE SET, we use MERGE on name only
                 // Properties may get updated but entity deduplication is preserved
                 // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
@@ -358,11 +359,12 @@ public class AgeGraphStorage implements GraphStorage {
                     String normalizedName = normalizeEntityName(entity.getEntityName());
                     String mergeCypher = String.format(
                         "MERGE (e:Entity {name: '%s'}) " +
-                        "SET e.entity_type = '%s', e.description = '%s' " +
+                        "SET e.entity_type = '%s', e.description = '%s', e.document_id = %s " +
                         "RETURN e",
                         escapeCypher(normalizedName),
                         escapeCypher(entity.getEntityType()),
-                        escapeCypher(entity.getDescription())
+                        escapeCypher(entity.getDescription()),
+                        entity.getDocumentId() != null ? "'" + escapeCypher(entity.getDocumentId()) + "'" : "null"
                     );
                     logger.debug("Executing batch MERGE for entity '{}' (original: '{}') on graph {} for project {}: {}", 
                         normalizedName, entity.getEntityName(), graphName, projectId, mergeCypher);
@@ -400,13 +402,14 @@ public class AgeGraphStorage implements GraphStorage {
                         "MERGE (src:Entity {name: '%s'}) " +
                         "MERGE (tgt:Entity {name: '%s'}) " +
                         "MERGE (src)-[r:RELATED_TO]->(tgt) " +
-                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f " +
+                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.document_id = %s " +
                         "RETURN r",
                         escapeCypher(normalizedSrc),
                         escapeCypher(normalizedTgt),
                         escapeCypher(relation.getDescription()),
                         escapeCypher(relation.getKeywords()),
-                        relation.getWeight()
+                        relation.getWeight(),
+                        relation.getDocumentId() != null ? "'" + escapeCypher(relation.getDocumentId()) + "'" : "null"
                     );
                     logger.debug("Executing MERGE for relation {} -> {} on graph {} for project {}", 
                         normalizedSrc, normalizedTgt, graphName, projectId);
@@ -445,21 +448,24 @@ public class AgeGraphStorage implements GraphStorage {
                     // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                     
                     for (Relation relation : relations) {
-                        String normalizedSrc = normalizeEntityName(relation.getSrcId());
-                        String normalizedTgt = normalizeEntityName(relation.getTgtId());
-                        String mergeCypher = String.format(Locale.US,
-                            "MERGE (src:Entity {name: '%s'}) " +
-                            "MERGE (tgt:Entity {name: '%s'}) " +
-                            "MERGE (src)-[r:RELATED_TO]->(tgt) " +
-                            "SET r.description = '%s', r.keywords = '%s', r.weight = %f " +
-                            "RETURN r",
-                            escapeCypher(normalizedSrc),
-                            escapeCypher(normalizedTgt),
-                            escapeCypher(relation.getDescription()),
-                            escapeCypher(relation.getKeywords()),
-                            relation.getWeight()
-                        );
-                        executeCypherWithConnection(conn, graphName, mergeCypher);
+                    String normalizedSrc = normalizeEntityName(relation.getSrcId());
+                    String normalizedTgt = normalizeEntityName(relation.getTgtId());
+                    String mergeCypher = String.format(Locale.US,
+                        "MERGE (src:Entity {name: '%s'}) " +
+                        "MERGE (tgt:Entity {name: '%s'}) " +
+                        "MERGE (src)-[r:RELATED_TO]->(tgt) " +
+                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.document_id = %s " +
+                        "RETURN r",
+                        escapeCypher(normalizedSrc),
+                        escapeCypher(normalizedTgt),
+                        escapeCypher(relation.getDescription()),
+                        escapeCypher(relation.getKeywords()),
+                        relation.getWeight(),
+                        relation.getDocumentId() != null ? "'" + escapeCypher(relation.getDocumentId()) + "'" : "null"
+                    );
+                    logger.debug("Executing MERGE for relation {} -> {} on graph {} for project {}", 
+                        normalizedSrc, normalizedTgt, graphName, projectId);
+                    executeCypherWithConnection(conn, graphName, mergeCypher);
                     }
                     
                     conn.commit();
@@ -644,32 +650,78 @@ public class AgeGraphStorage implements GraphStorage {
     
     @Override
     public CompletableFuture<Integer> deleteBySourceId(@NotNull String projectId, @NotNull String sourceId) {
+        // Renamed to deleteByDocumentId for clarity, but keeping this for backward compatibility
+        return deleteByDocumentId(projectId, sourceId);
+    }
+    
+    /**
+     * Deletes all entities and relations associated with a specific document.
+     * This ensures proper cleanup when documents are deleted.
+     * 
+     * @param projectId the project UUID
+     * @param documentId the document UUID to delete entities/relations for
+     * @return CompletableFuture with the number of entities deleted
+     */
+    public CompletableFuture<Integer> deleteByDocumentId(@NotNull String projectId, @NotNull String documentId) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
             validateGraphExists(projectId);
             String graphName = getGraphName(projectId);
             
-            try {
-                // Delete relations by source_id
-                String deleteRelations = String.format(
-                    "MATCH ()-[r:RELATED_TO {source_id: '%s'}]-() DELETE r",
-                    escapeCypher(sourceId)
-                );
-                executeCypher(graphName, deleteRelations);
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
                 
-                // Delete entities by source_id
-                String deleteEntities = String.format(
-                    "MATCH (e:Entity {source_id: '%s'}) DETACH DELETE e",
-                    escapeCypher(sourceId)
-                );
-                executeCypher(graphName, deleteEntities);
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
                 
-                logger.debug("Deleted entities/relations by source_id {} on graph {} for project {}", sourceId, graphName, projectId);
-                // Count is approximate since AGE doesn't return counts easily
-                return 0;
-            } catch (Exception e) {
-                logger.error("Failed to delete by source_id {} on graph {} for project {}: {}", sourceId, graphName, projectId, e.getMessage());
-                return 0;
+                int entitiesDeleted = 0;
+                int relationsDeleted = 0;
+                
+                // Step 1: Delete all relations with this document_id
+                String deleteRelationsCypher = String.format(
+                    "MATCH ()-[r:RELATED_TO]->() WHERE r.document_id = '%s' DELETE r",
+                    escapeCypher(documentId)
+                );
+                
+                String deleteRelationsSql = String.format(
+                    "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)",
+                    graphName,
+                    deleteRelationsCypher
+                );
+                
+                try (ResultSet rs = stmt.executeQuery(deleteRelationsSql)) {
+                    while (rs.next()) {
+                        relationsDeleted++;
+                    }
+                }
+                
+                // Step 2: Delete all entities with this document_id
+                // Use DETACH DELETE to remove any remaining relationships
+                String deleteEntitiesCypher = String.format(
+                    "MATCH (e:Entity) WHERE e.document_id = '%s' DETACH DELETE e",
+                    escapeCypher(documentId)
+                );
+                
+                String deleteEntitiesSql = String.format(
+                    "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)",
+                    graphName,
+                    deleteEntitiesCypher
+                );
+                
+                try (ResultSet rs = stmt.executeQuery(deleteEntitiesSql)) {
+                    while (rs.next()) {
+                        entitiesDeleted++;
+                    }
+                }
+                
+                logger.info("Deleted graph data for document {} in project {}: {} entities, {} relations",
+                    documentId, projectId, entitiesDeleted, relationsDeleted);
+                
+                return entitiesDeleted + relationsDeleted;
+                
+            } catch (SQLException e) {
+                logger.error("Failed to delete graph data for document {} in project {}", documentId, projectId, e);
+                throw new RuntimeException("Failed to delete graph data for document: " + documentId, e);
             }
         }, executor);
     }
@@ -975,7 +1027,6 @@ public class AgeGraphStorage implements GraphStorage {
             String name = getStringProperty(node, "name");
             String entityType = getStringProperty(node, "entity_type");
             String description = getStringProperty(node, "description");
-            String sourceId = getStringProperty(node, "source_id");
             
             if (name == null) return null;
             
@@ -983,7 +1034,6 @@ public class AgeGraphStorage implements GraphStorage {
                 .entityName(name)
                 .entityType(entityType != null ? entityType : "UNKNOWN")
                 .description(description != null ? description : "")
-                .sourceId(sourceId != null ? sourceId : "")
                 .build();
                 
         } catch (Exception e) {
@@ -1001,7 +1051,6 @@ public class AgeGraphStorage implements GraphStorage {
             
             String description = getStringProperty(node, "description");
             String keywords = getStringProperty(node, "keywords");
-            String sourceId = getStringProperty(node, "source_id");
             double weight = getDoubleProperty(node, "weight", 1.0);
             
             return Relation.builder()
@@ -1009,7 +1058,6 @@ public class AgeGraphStorage implements GraphStorage {
                 .tgtId(tgtName)
                 .description(description != null ? description : "RELATED_TO")
                 .keywords(keywords != null ? keywords : "")
-                .sourceId(sourceId != null ? sourceId : "")
                 .weight(weight)
                 .build();
                 

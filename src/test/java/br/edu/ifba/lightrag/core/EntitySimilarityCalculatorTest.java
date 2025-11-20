@@ -463,20 +463,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("computeSimilarity: should return detailed score breakdown")
     void testComputeSimilarityBreakdown() {
-        Entity entity1 = new Entity(
-            "Warren State Home",
-            "organization",
-            "A residential facility",
-            "source1",
-            null
-        );
-        Entity entity2 = new Entity(
-            "Warren Home",
-            "organization",
-            "A residential facility",
-            "source2",
-            null
-        );
+        Entity entity1 = new Entity("Warren State Home", "organization", "A residential facility", "source1");
+        Entity entity2 = new Entity("Warren Home", "organization", "A residential facility", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(entity1, entity2);
         
@@ -491,20 +479,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("computeSimilarity: weighted score should match formula")
     void testComputeSimilarityWeightedFormula() {
-        Entity entity1 = new Entity(
-            "Warren State Home",
-            "organization",
-            "Description 1",
-            "source1",
-            null
-        );
-        Entity entity2 = new Entity(
-            "Warren Home",
-            "organization",
-            "Description 2",
-            "source2",
-            null
-        );
+        Entity entity1 = new Entity("Warren State Home", "organization", "Description 1", "source1");
+        Entity entity2 = new Entity("Warren Home", "organization", "Description 2", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(entity1, entity2);
         
@@ -521,20 +497,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("computeSimilarity: different types should return 0.0 weighted score")
     void testComputeSimilarityDifferentTypes() {
-        Entity entity1 = new Entity(
-            "Apple",
-            "organization",
-            "Tech company",
-            "source1",
-            null
-        );
-        Entity entity2 = new Entity(
-            "Apple",
-            "fruit",
-            "A red fruit",
-            "source2",
-            null
-        );
+        Entity entity1 = new Entity("Apple", "organization", "Tech company", "source1");
+        Entity entity2 = new Entity("Apple", "fruit", "A red fruit", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(entity1, entity2);
         
@@ -544,7 +508,7 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("computeSimilarity: null entity should throw exception")
     void testComputeSimilarityNullEntity() {
-        Entity entity = new Entity("Test", "type", "desc", "source", null);
+        Entity entity = new Entity("Test", "type", "desc", "source");
         
         assertThrows(IllegalArgumentException.class, () -> {
             calculator.computeSimilarity(null, entity);
@@ -638,8 +602,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("T037: computeSimilarity should return 0.0 for different types - Apple example")
     void testComputeSimilarityDifferentTypesApple() {
-        Entity apple1 = new Entity("Apple Inc.", "ORGANIZATION", "A technology company", "source1", null);
-        Entity apple2 = new Entity("apple", "FOOD", "A type of fruit", "source2", null);
+        Entity apple1 = new Entity("Apple Inc.", "ORGANIZATION", "A technology company", "source1");
+        Entity apple2 = new Entity("apple", "FOOD", "A type of fruit", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(apple1, apple2);
         
@@ -655,8 +619,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("T037: Mercury planet vs Mercury element should not merge")
     void testMercuryTypeAwareness() {
-        Entity mercury1 = new Entity("Mercury", "PLANET", "The closest planet to the Sun", "source1", null);
-        Entity mercury2 = new Entity("Mercury", "CHEMICAL_ELEMENT", "A chemical element with symbol Hg", "source2", null);
+        Entity mercury1 = new Entity("Mercury", "PLANET", "The closest planet to the Sun", "source1");
+        Entity mercury2 = new Entity("Mercury", "CHEMICAL_ELEMENT", "A chemical element with symbol Hg", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(mercury1, mercury2);
         
@@ -668,8 +632,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("T037: Washington person vs Washington location should not merge")
     void testWashingtonTypeAwareness() {
-        Entity washington1 = new Entity("Washington", "PERSON", "George Washington, first US president", "source1", null);
-        Entity washington2 = new Entity("Washington", "LOCATION", "The capital of the United States", "source2", null);
+        Entity washington1 = new Entity("Washington", "PERSON", "George Washington, first US president", "source1");
+        Entity washington2 = new Entity("Washington", "LOCATION", "The capital of the United States", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(washington1, washington2);
         
@@ -681,8 +645,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("T037: Jordan person vs Jordan country should not merge")
     void testJordanTypeAwareness() {
-        Entity jordan1 = new Entity("Michael Jordan", "PERSON", "Famous basketball player", "source1", null);
-        Entity jordan2 = new Entity("Jordan", "GEO", "A country in the Middle East", "source2", null);
+        Entity jordan1 = new Entity("Michael Jordan", "PERSON", "Famous basketball player", "source1");
+        Entity jordan2 = new Entity("Jordan", "GEO", "A country in the Middle East", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(jordan1, jordan2);
         
@@ -708,8 +672,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("T037: Type checking should be case-insensitive")
     void testTypeCheckingCaseInsensitive() {
-        Entity entity1 = new Entity("Apple", "organization", "Tech company", "source1", null);
-        Entity entity2 = new Entity("Apple Inc.", "ORGANIZATION", "Tech company", "source2", null);
+        Entity entity1 = new Entity("Apple", "organization", "Tech company", "source1");
+        Entity entity2 = new Entity("Apple Inc.", "ORGANIZATION", "Tech company", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(entity1, entity2);
         
@@ -721,8 +685,8 @@ class EntitySimilarityCalculatorTest {
     @Test
     @DisplayName("T037: Entities with same name and same type should have high similarity")
     void testSameNameSameTypeHighSimilarity() {
-        Entity entity1 = new Entity("Apple Inc.", "ORGANIZATION", "A technology company", "source1", null);
-        Entity entity2 = new Entity("Apple Inc.", "ORGANIZATION", "A leading tech firm", "source2", null);
+        Entity entity1 = new Entity("Apple Inc.", "ORGANIZATION", "A technology company", "source1");
+        Entity entity2 = new Entity("Apple Inc.", "ORGANIZATION", "A leading tech firm", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(entity1, entity2);
         
@@ -742,8 +706,8 @@ class EntitySimilarityCalculatorTest {
         "Microsoft, Microsoft Corp, ORGANIZATION, ORGANIZATION, true"
     })
     void testTypeAwarenessVariations(String name1, String name2, String type1, String type2, boolean shouldMerge) {
-        Entity entity1 = new Entity(name1, type1, "Description 1", "source1", null);
-        Entity entity2 = new Entity(name2, type2, "Description 2", "source2", null);
+        Entity entity1 = new Entity(name1, type1, "Description 1", "source1");
+        Entity entity2 = new Entity(name2, type2, "Description 2", "source2");
         
         EntitySimilarityScore score = calculator.computeSimilarity(entity1, entity2);
         

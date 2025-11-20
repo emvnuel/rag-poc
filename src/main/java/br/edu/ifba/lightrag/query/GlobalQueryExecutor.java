@@ -124,7 +124,7 @@ public class GlobalQueryExecutor extends QueryExecutor {
                                     entity.getDescription(),              // content
                                     result.score(),                       // relevanceScore
                                     null,                                 // documentId (not applicable for entities)
-                                    entity.getSourceId(),                 // sourceId
+                                    null,                                 // sourceId (not applicable)
                                     0,                                    // chunkIndex (not applicable)
                                     "entity"                              // type
                                 ));

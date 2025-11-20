@@ -478,9 +478,9 @@ class EntityClustererTest {
     @DisplayName("mergeCluster should preserve source ID from canonical entity")
     void testMergeClusterPreserveSourceId() {
         // Arrange: Entities with different source IDs
-        Entity e1 = new Entity("MIT", "ORGANIZATION", "Desc 1", "src1", null);
-        Entity e2 = new Entity("Massachusetts Institute of Technology", "ORGANIZATION", "Desc 2", "src2", null);
-        Entity e3 = new Entity("M.I.T.", "ORGANIZATION", "Desc 3", "src3", null);
+        Entity e1 = new Entity("MIT", "ORGANIZATION", "Desc 1", "src1");
+        Entity e2 = new Entity("Massachusetts Institute of Technology", "ORGANIZATION", "Desc 2", "src2");
+        Entity e3 = new Entity("M.I.T.", "ORGANIZATION", "Desc 3", "src3");
         
         testEntities = List.of(e1, e2, e3);
         Set<Integer> clusterIndices = Set.of(0, 1, 2);
@@ -489,7 +489,7 @@ class EntityClustererTest {
         EntityCluster cluster = clusterer.mergeCluster(clusterIndices, testEntities);
         
         // Assert: Canonical entity should preserve its source ID
-        String sourceId = cluster.canonicalEntity().getSourceId();
+        String sourceId = cluster.canonicalEntity().getFilePath();
         assertNotNull(sourceId, "Canonical entity should have a source ID");
         assertTrue(List.of("src1", "src2", "src3").contains(sourceId), 
             "Source ID should be from one of the merged entities");
@@ -659,6 +659,6 @@ class EntityClustererTest {
      * Helper method to create test entities with custom description.
      */
     private Entity createEntity(String name, String type, String description) {
-        return new Entity(name, type, description, "test-source-" + name.hashCode(), null);
+        return new Entity(name, type, description, "test-source-" + name.hashCode());
     }
 }

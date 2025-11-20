@@ -7,11 +7,9 @@ CREATE EXTENSION IF NOT EXISTS age;
 -- Load AGE extension into memory
 LOAD 'age';
 
--- Set search path for current session to include ag_catalog
-SET search_path = ag_catalog, "$user", public;
-
--- Set search path at database level for future sessions
-ALTER DATABASE ragsaas SET search_path = ag_catalog, "$user", public;
+-- NOTE: We do NOT modify search_path globally to avoid polluting application table creation
+-- Application tables (projects, documents, lightrag_vectors) should go in 'public' schema
+-- AGE automatically uses 'ag_catalog' schema for its own tables (ag_graph, ag_label) and graph data
 
 -- Create helper function to ensure graph exists
 CREATE OR REPLACE FUNCTION ensure_graph_exists(graph_name TEXT)

@@ -26,20 +26,22 @@ public record LightRAGQueryResult(
     /**
      * Represents a source chunk or entity used to generate the answer.
      * Contains all metadata needed for proper citation and source tracking.
+     * 
+     * Note: sourceId is nullable for entity-based results (global/hybrid mode)
+     * where the source is the knowledge graph rather than a specific document.
      */
     public record SourceChunk(
             @NotNull String chunkId,
             @NotNull String content,
             double relevanceScore,
             @Nullable String documentId,
-            @NotNull String sourceId,
+            @Nullable String sourceId,
             int chunkIndex,
             @NotNull String type
     ) {
         public SourceChunk {
             Objects.requireNonNull(chunkId, "chunkId must not be null");
             Objects.requireNonNull(content, "content must not be null");
-            Objects.requireNonNull(sourceId, "sourceId must not be null");
             Objects.requireNonNull(type, "type must not be null");
         }
     }

@@ -130,9 +130,9 @@ public class LightRAGService {
         try {
             LOG.info("Initializing LightRAG service with PostgreSQL storage...");
 
-            // Initialize AGE graph database
-            ageConfig.initialize();
-            LOG.info("Apache AGE graph initialized");
+            // Note: AGE graph database uses per-project isolation
+            // Individual project graphs are created on-demand by AgeGraphStorage
+            LOG.info("Apache AGE graph storage ready (per-project isolation enabled)");
 
             // Create working directory for KV storage
             final Path workingPath = Paths.get(workingDir);
@@ -311,6 +311,19 @@ public class LightRAGService {
     public CompletableFuture<Boolean> hasDocumentVectors(final UUID documentId) {
         LOG.debugf("Checking if document %s has existing vectors", documentId);
         return chunkVectorStorage.hasVectors(documentId.toString());
+    }
+
+    /**
+     * Deletes all graph entities and relations associated with a document.
+     * This is called when a document is deleted to ensure proper cleanup.
+     * 
+     * @param projectId The project UUID
+     * @param documentId The document UUID to delete graph data for
+     * @return CompletableFuture with the number of items deleted
+     */
+    public CompletableFuture<Integer> deleteDocumentFromGraph(final String projectId, final String documentId) {
+        LOG.infof("Deleting graph data for document %s in project %s", documentId, projectId);
+        return graphStorage.deleteBySourceId(projectId, documentId);
     }
 
     /**

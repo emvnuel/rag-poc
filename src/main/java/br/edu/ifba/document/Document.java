@@ -24,7 +24,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
 @Entity
-@Table(name = "documents")
+@Table(name = "documents", schema = "rag")
 @Getter
 @Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED, force = true)

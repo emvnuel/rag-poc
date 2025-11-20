@@ -49,8 +49,9 @@ COPY docker-init/03-init-schema.sql /docker-entrypoint-initdb.d/
 # Note: We don't add AGE to shared_preload_libraries to avoid conflicts with pgvector
 # AGE will be loaded explicitly in the init script after pgvector is created
 
-# Set default search path to include ag_catalog for AGE
-RUN echo "search_path = 'ag_catalog, \"\$user\", public'" >> /usr/share/postgresql/postgresql.conf.sample
+# NOTE: We do NOT set search_path globally to avoid polluting application table creation
+# Application tables (projects, documents, lightrag_vectors) should go in 'public' schema
+# AGE queries will explicitly use ag_catalog.cypher() for graph operations
 
 # Health check to ensure PostgreSQL is ready
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \

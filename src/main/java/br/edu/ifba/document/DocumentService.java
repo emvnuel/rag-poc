@@ -10,6 +10,9 @@ public class DocumentService {
     @Inject
     DocumentRepository documentRepository;
 
+    @Inject
+    br.edu.ifba.lightrag.LightRAGService lightRAGService;
+
     @Transactional
     public Document create(final Document document) {
         documentRepository.persist(document);
@@ -18,6 +21,28 @@ public class DocumentService {
 
     public Document findById(final java.util.UUID id) {
         return documentRepository.findByIdOrThrow(id);
+    }
+    
+    /**
+     * Deletes a document and all associated data (vectors and graph entities/relations).
+     * 
+     * @param documentId The document ID to delete
+     * @param projectId The project ID (for graph cleanup)
+     */
+    @Transactional
+    public void delete(final java.util.UUID documentId, final java.util.UUID projectId) {
+        final Document document = documentRepository.findByIdOrThrow(documentId);
+        
+        // Delete graph entities and relations for this document
+        try {
+            lightRAGService.deleteDocumentFromGraph(projectId.toString(), documentId.toString())
+                .join(); // Wait for async completion
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to delete graph data for document: " + documentId, e);
+        }
+        
+        // Delete the document (vectors will cascade automatically via FK constraint)
+        documentRepository.delete(document);
     }
 
     public Document findByFileName(final String fileName) {

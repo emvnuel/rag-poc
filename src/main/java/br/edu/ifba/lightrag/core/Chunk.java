@@ -16,10 +16,6 @@ public final class Chunk {
     @NotNull
     private final String content;
     
-    @JsonProperty("source_id")
-    @NotNull
-    private final String sourceId;
-    
     @JsonProperty("file_path")
     @Nullable
     private final String filePath;
@@ -35,19 +31,16 @@ public final class Chunk {
      * Constructs a new Chunk.
      *
      * @param content the text content of the chunk (required)
-     * @param sourceId the ID of the source document (required)
      * @param filePath the file path of the source document (optional)
      * @param chunkId the unique identifier for this chunk (required)
      * @param tokens the number of tokens in this chunk
      */
     public Chunk(
             @NotNull String content,
-            @NotNull String sourceId,
             @Nullable String filePath,
             @NotNull String chunkId,
             int tokens) {
         this.content = Objects.requireNonNull(content, "content must not be null");
-        this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
         this.filePath = filePath;
         this.chunkId = Objects.requireNonNull(chunkId, "chunkId must not be null");
         this.tokens = tokens;
@@ -56,11 +49,6 @@ public final class Chunk {
     @NotNull
     public String getContent() {
         return content;
-    }
-    
-    @NotNull
-    public String getSourceId() {
-        return sourceId;
     }
     
     @Nullable
@@ -84,21 +72,19 @@ public final class Chunk {
         Chunk chunk = (Chunk) obj;
         return tokens == chunk.tokens &&
                Objects.equals(content, chunk.content) &&
-               Objects.equals(sourceId, chunk.sourceId) &&
                Objects.equals(filePath, chunk.filePath) &&
                Objects.equals(chunkId, chunk.chunkId);
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(content, sourceId, filePath, chunkId, tokens);
+        return Objects.hash(content, filePath, chunkId, tokens);
     }
     
     @Override
     public String toString() {
         return "Chunk{" +
                 "chunkId='" + chunkId + '\'' +
-                ", sourceId='" + sourceId + '\'' +
                 ", filePath='" + filePath + '\'' +
                 ", tokens=" + tokens +
                 ", contentLength=" + content.length() +
@@ -110,18 +96,12 @@ public final class Chunk {
      */
     public static class Builder {
         private String content;
-        private String sourceId;
         private String filePath;
         private String chunkId;
         private int tokens;
         
         public Builder content(@NotNull String content) {
             this.content = content;
-            return this;
-        }
-        
-        public Builder sourceId(@NotNull String sourceId) {
-            this.sourceId = sourceId;
             return this;
         }
         
@@ -141,7 +121,7 @@ public final class Chunk {
         }
         
         public Chunk build() {
-            return new Chunk(content, sourceId, filePath, chunkId, tokens);
+            return new Chunk(content, filePath, chunkId, tokens);
         }
     }
     
