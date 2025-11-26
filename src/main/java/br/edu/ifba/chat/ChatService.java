@@ -47,10 +47,11 @@ public class ChatService {
         final UUID projectId = request.projectId();
         final String userMessage = request.message();
         final List<ChatMessage> history = request.history() != null ? request.history() : new ArrayList<>();
+        final Boolean enableRerank = request.rerank();
 
-        LOG.infof("Processing chat request for project: %s, message: '%s'", projectId, userMessage);
+        LOG.infof("Processing chat request for project: %s, message: '%s', rerank: %s", projectId, userMessage, enableRerank);
 
-        final SearchResponse searchResponse = searchService.search(userMessage, projectId);
+        final SearchResponse searchResponse = searchService.search(userMessage, projectId, enableRerank);
         final List<SearchResult> sources = searchResponse.results();
 
         final String contextPrompt = buildContextPrompt(sources);

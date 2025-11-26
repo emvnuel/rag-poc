@@ -40,14 +40,28 @@ public class SearchService {
      * @return SearchResponse with the answer and source chunks as SearchResults with citations
      */
     public SearchResponse search(final String query, final UUID projectId) {
-        LOG.infof("Executing LightRAG search for: '%s' in project: %s", query, projectId);
+        return search(query, projectId, null);
+    }
+    
+    /**
+     * Searches documents using LightRAG knowledge graph query with optional reranking control.
+     * Returns both the synthesized answer AND the source chunks used to generate it.
+     * The number of chunks returned is controlled by lightrag.query.chunk.top.k configuration.
+     * 
+     * @param query The search query
+     * @param projectId The project UUID to search within
+     * @param enableRerank Optional flag to enable/disable reranking (null uses global config)
+     * @return SearchResponse with the answer and source chunks as SearchResults with citations
+     */
+    public SearchResponse search(final String query, final UUID projectId, final Boolean enableRerank) {
+        LOG.infof("Executing LightRAG search for: '%s' in project: %s, rerank: %s", query, projectId, enableRerank);
 
         try {
             // Parse query mode from config
             final QueryParam.Mode mode = parseQueryMode(queryMode);
             
             // Execute LightRAG query and get result with sources
-            final LightRAGQueryResult queryResult = lightragService.query(query, mode, projectId).join();
+            final LightRAGQueryResult queryResult = lightragService.query(query, mode, projectId, enableRerank).join();
             
             LOG.infof("LightRAG query completed - answer length: %d characters, sources: %d", 
                     queryResult.answer().length(), queryResult.totalSources());

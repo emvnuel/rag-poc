@@ -67,6 +67,45 @@ public interface VectorStorage extends AutoCloseable {
     CompletableFuture<Integer> deleteBatch(@NotNull List<String> ids);
     
     /**
+     * Batch deletes entity embeddings by entity names.
+     * 
+     * Used for document deletion and entity merge cleanup.
+     * Deletes vectors where type='entity' and content matches any entity name.
+     *
+     * @param projectId the project UUID
+     * @param entityNames set of entity names to delete embeddings for
+     * @return a CompletableFuture<Integer> - number of embeddings deleted
+     * @since spec-007
+     */
+    CompletableFuture<Integer> deleteEntityEmbeddings(@NotNull String projectId, @NotNull java.util.Set<String> entityNames);
+    
+    /**
+     * Batch deletes chunk embeddings by chunk IDs.
+     * 
+     * Used for document deletion to remove chunk vectors.
+     * Deletes vectors where type='chunk' and id matches any chunk ID.
+     *
+     * @param projectId the project UUID
+     * @param chunkIds set of chunk IDs to delete embeddings for
+     * @return a CompletableFuture<Integer> - number of embeddings deleted
+     * @since spec-007
+     */
+    CompletableFuture<Integer> deleteChunkEmbeddings(@NotNull String projectId, @NotNull java.util.Set<String> chunkIds);
+    
+    /**
+     * Gets all chunk IDs belonging to a document.
+     * 
+     * Used for document deletion to identify all chunks that need to be removed
+     * along with their associated entities and relations.
+     *
+     * @param projectId the project UUID
+     * @param documentId the document UUID
+     * @return a CompletableFuture<List<String>> - list of chunk IDs belonging to the document
+     * @since spec-007
+     */
+    CompletableFuture<List<String>> getChunkIdsByDocumentId(@NotNull String projectId, @NotNull String documentId);
+    
+    /**
      * Gets a vector by ID.
      *
      * @param id the ID of the vector to retrieve

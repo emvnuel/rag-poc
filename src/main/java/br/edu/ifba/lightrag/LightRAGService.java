@@ -58,6 +58,9 @@ public class LightRAGService {
 
     @Inject
     br.edu.ifba.lightrag.core.DeduplicationConfig deduplicationConfig;
+    
+    @Inject
+    br.edu.ifba.lightrag.rerank.RerankerFactory rerankerFactory;
 
     @ConfigProperty(name = "lightrag.chunk.size", defaultValue = "1200")
     int chunkSize;
@@ -169,6 +172,7 @@ public class LightRAGService {
                     .docStatusStorage(docStatusStorage)
                     .entityResolver(entityResolver)
                     .deduplicationConfig(deduplicationConfig)
+                    .reranker(rerankerFactory.getReranker())
                     .localSystemPrompt(localSystemPrompt)
                     .globalSystemPrompt(globalSystemPrompt)
                     .hybridSystemPrompt(hybridSystemPrompt)
@@ -267,16 +271,39 @@ public class LightRAGService {
             final String query,
             final QueryParam.Mode mode,
             final UUID projectId) {
+        return query(query, mode, projectId, null);
+    }
+    
+    /**
+     * Queries the LightRAG knowledge graph with optional reranking control.
+     *
+     * @param query The query string
+     * @param mode The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
+     * @param projectId The project UUID (for filtering)
+     * @param enableRerank Optional flag to enable/disable reranking (null uses global config)
+     * @return CompletableFuture with the query result containing answer and source chunks
+     */
+    public CompletableFuture<LightRAGQueryResult> query(
+            final String query,
+            final QueryParam.Mode mode,
+            final UUID projectId,
+            final Boolean enableRerank) {
 
-        LOG.infof("Executing LightRAG query - mode: %s, projectId: %s, query: '%s'", 
-                mode, projectId, query);
+        LOG.infof("Executing LightRAG query - mode: %s, projectId: %s, query: '%s', rerank: %s", 
+                mode, projectId, query, enableRerank);
 
-        final QueryParam param = QueryParam.builder()
+        final QueryParam.Builder paramBuilder = QueryParam.builder()
                 .mode(mode)
                 .topK(topK)
                 .chunkTopK(chunkTopK)
-                .projectId(projectId.toString())
-                .build();
+                .projectId(projectId.toString());
+        
+        // Apply rerank setting: use explicit value if provided, otherwise default to true (config-based)
+        if (enableRerank != null) {
+            paramBuilder.enableRerank(enableRerank);
+        }
+        
+        final QueryParam param = paramBuilder.build();
 
         return lightRAG.query(query, param)
                 .thenApply(result -> {

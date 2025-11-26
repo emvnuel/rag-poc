@@ -3,6 +3,7 @@ package br.edu.ifba.lightrag.core;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import br.edu.ifba.lightrag.llm.LLMFunction;
 import br.edu.ifba.lightrag.query.*;
+import br.edu.ifba.lightrag.rerank.Reranker;
 import br.edu.ifba.lightrag.storage.DocStatusStorage;
 import br.edu.ifba.lightrag.storage.DocStatusStorage.DocumentStatus;
 import br.edu.ifba.lightrag.storage.GraphStorage;
@@ -48,6 +49,9 @@ public class LightRAG {
     // Entity deduplication (optional)
     private final EntityResolver entityResolver;
     private final DeduplicationConfig deduplicationConfig;
+    
+    // Reranker (optional)
+    private final Reranker reranker;
     
     // System prompts for query modes
     private final String localSystemPrompt;
@@ -111,6 +115,7 @@ public class LightRAG {
         private EntityResolver entityResolver;
         private DeduplicationConfig deduplicationConfig;
         private LightRAGExtractionConfig extractionConfig;
+        private Reranker reranker;
         
         public Builder config(@NotNull LightRAGConfig config) {
             this.config = config;
@@ -222,6 +227,11 @@ public class LightRAG {
             return this;
         }
         
+        public Builder reranker(@Nullable Reranker reranker) {
+            this.reranker = reranker;
+            return this;
+        }
+        
         public LightRAG build() {
             if (llmFunction == null) {
                 throw new IllegalStateException("llmFunction is required");
@@ -300,7 +310,8 @@ public class LightRAG {
                 entityExtractionUserPrompt,
                 entityResolver,
                 deduplicationConfig,
-                extractionConfig
+                extractionConfig,
+                reranker
             );
         }
     }
@@ -330,7 +341,8 @@ public class LightRAG {
         @NotNull String entityExtractionUserPrompt,
         @Nullable EntityResolver entityResolver,
         @Nullable DeduplicationConfig deduplicationConfig,
-        @Nullable LightRAGExtractionConfig extractionConfig
+        @Nullable LightRAGExtractionConfig extractionConfig,
+        @Nullable Reranker reranker
     ) {
         this.config = config;
         this.llmFunction = llmFunction;
@@ -344,6 +356,7 @@ public class LightRAG {
         this.entityResolver = entityResolver;
         this.deduplicationConfig = deduplicationConfig;
         this.extractionConfig = extractionConfig;
+        this.reranker = reranker;
         this.localSystemPrompt = localSystemPrompt;
         this.globalSystemPrompt = globalSystemPrompt;
         this.hybridSystemPrompt = hybridSystemPrompt;
@@ -400,7 +413,7 @@ public class LightRAG {
             this.mixExecutor = new MixQueryExecutor(
                 llmFunction, embeddingFunction, chunkStorage,
                 chunkVectorStorage, entityVectorStorage, graphStorage,
-                mixSystemPrompt
+                mixSystemPrompt, reranker
             );
             
             initialized = true;

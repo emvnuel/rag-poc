@@ -206,7 +206,9 @@ public class LLMDescriptionSummarizer implements DescriptionSummarizer {
             descList.toString()
         );
         
-        return llmFunction.apply(prompt, SUMMARIZATION_SYSTEM_PROMPT, null, Map.of())
+        // Pass operation type for token tracking (T070)
+        return llmFunction.apply(prompt, SUMMARIZATION_SYSTEM_PROMPT, null, 
+            Map.of("operation_type", TokenUsage.OP_SUMMARIZATION))
             .thenApply(String::trim);
     }
     
@@ -276,102 +278,141 @@ public class LLMDescriptionSummarizer implements DescriptionSummarizer {
     
     /**
      * Manual configuration holder for non-CDI usage.
+     * Uses static nested classes to avoid CDI interceptor binding issues.
      */
-    private record ManualConfig(int threshold, int maxTokens) implements LightRAGExtractionConfig {
+    private static final class ManualConfig implements LightRAGExtractionConfig {
+        private final int threshold;
+        private final int maxTokens;
+        private final Gleaning gleaningConfig;
+        private final Description descriptionConfig;
+        private final Query queryConfig;
+        private final Entity entityConfig;
+        
+        ManualConfig(int threshold, int maxTokens) {
+            this.threshold = threshold;
+            this.maxTokens = maxTokens;
+            this.gleaningConfig = new ManualGleaning();
+            this.descriptionConfig = new ManualDescription(threshold, maxTokens);
+            this.queryConfig = new ManualQuery();
+            this.entityConfig = new ManualEntity();
+        }
         
         @Override
         public Gleaning gleaning() {
-            return new Gleaning() {
-                @Override
-                public boolean enabled() {
-                    return true;
-                }
-                
-                @Override
-                public int maxPasses() {
-                    return 1;
-                }
-            };
+            return gleaningConfig;
         }
         
         @Override
         public Description description() {
-            return new Description() {
-                @Override
-                public int maxTokens() {
-                    return maxTokens;
-                }
-                
-                @Override
-                public int summarizationThreshold() {
-                    return threshold;
-                }
-                
-                @Override
-                public String separator() {
-                    return " | ";
-                }
-            };
+            return descriptionConfig;
         }
         
         @Override
         public Query query() {
-            return new Query() {
-                @Override
-                public KeywordExtraction keywordExtraction() {
-                    return new KeywordExtraction() {
-                        @Override
-                        public boolean enabled() {
-                            return true;
-                        }
-                        
-                        @Override
-                        public int cacheTtl() {
-                            return 3600;
-                        }
-                    };
-                }
-                
-                @Override
-                public Context context() {
-                    return new Context() {
-                        @Override
-                        public int maxTokens() {
-                            return 4000;
-                        }
-                        
-                        @Override
-                        public double entityBudgetRatio() {
-                            return 0.4;
-                        }
-                        
-                        @Override
-                        public double relationBudgetRatio() {
-                            return 0.3;
-                        }
-                        
-                        @Override
-                        public double chunkBudgetRatio() {
-                            return 0.3;
-                        }
-                    };
-                }
-            };
+            return queryConfig;
         }
         
         @Override
         public Entity entity() {
-            return new Entity() {
-                @Override
-                public int nameMaxLength() {
-                    return 500;
-                }
-                
-                @Override
-                public int maxSourceIds() {
-                    return 50;
-                }
-            };
+            return entityConfig;
+        }
+    }
+    
+    private static final class ManualGleaning implements LightRAGExtractionConfig.Gleaning {
+        @Override
+        public boolean enabled() {
+            return true;
+        }
+        
+        @Override
+        public int maxPasses() {
+            return 1;
+        }
+    }
+    
+    private static final class ManualDescription implements LightRAGExtractionConfig.Description {
+        private final int threshold;
+        private final int maxTokens;
+        
+        ManualDescription(int threshold, int maxTokens) {
+            this.threshold = threshold;
+            this.maxTokens = maxTokens;
+        }
+        
+        @Override
+        public int maxTokens() {
+            return maxTokens;
+        }
+        
+        @Override
+        public int summarizationThreshold() {
+            return threshold;
+        }
+        
+        @Override
+        public String separator() {
+            return " | ";
+        }
+    }
+    
+    private static final class ManualQuery implements LightRAGExtractionConfig.Query {
+        private final LightRAGExtractionConfig.KeywordExtraction keywordExtractionConfig = new ManualKeywordExtraction();
+        private final LightRAGExtractionConfig.Context contextConfig = new ManualContext();
+        
+        @Override
+        public LightRAGExtractionConfig.KeywordExtraction keywordExtraction() {
+            return keywordExtractionConfig;
+        }
+        
+        @Override
+        public LightRAGExtractionConfig.Context context() {
+            return contextConfig;
+        }
+    }
+    
+    private static final class ManualKeywordExtraction implements LightRAGExtractionConfig.KeywordExtraction {
+        @Override
+        public boolean enabled() {
+            return true;
+        }
+        
+        @Override
+        public int cacheTtl() {
+            return 3600;
+        }
+    }
+    
+    private static final class ManualContext implements LightRAGExtractionConfig.Context {
+        @Override
+        public int maxTokens() {
+            return 4000;
+        }
+        
+        @Override
+        public double entityBudgetRatio() {
+            return 0.4;
+        }
+        
+        @Override
+        public double relationBudgetRatio() {
+            return 0.3;
+        }
+        
+        @Override
+        public double chunkBudgetRatio() {
+            return 0.3;
+        }
+    }
+    
+    private static final class ManualEntity implements LightRAGExtractionConfig.Entity {
+        @Override
+        public int nameMaxLength() {
+            return 500;
+        }
+        
+        @Override
+        public int maxSourceIds() {
+            return 50;
         }
     }
 }

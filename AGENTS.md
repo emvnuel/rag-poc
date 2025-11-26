@@ -274,11 +274,176 @@ lightrag.extraction.query.context.max-tokens=2000
 - **Cause**: One source type dominating context
 - **Fix**: Adjust budget ratios (e.g., `entity-budget-ratio=0.3, relation-budget-ratio=0.4`)
 
+## Reranker Integration
+
+The system supports optional reranking of retrieved chunks using Cohere or Jina APIs.
+
+### Configuration
+Configure via `application.properties`:
+```properties
+# Reranker provider: cohere, jina, or none
+lightrag.reranker.provider=cohere
+
+# Cohere configuration
+lightrag.reranker.cohere.api-key=${COHERE_API_KEY:}
+lightrag.reranker.cohere.model=rerank-english-v3.0
+
+# Jina configuration  
+lightrag.reranker.jina.api-key=${JINA_API_KEY:}
+lightrag.reranker.jina.model=jina-reranker-v1-base-en
+
+# Minimum relevance score (0.0-1.0)
+lightrag.reranker.min-score=0.0
+```
+
+### Usage
+Add `?rerank=true` to chat queries to enable reranking:
+```bash
+curl "http://localhost:8080/projects/{id}/chat?q=your+query&rerank=true"
+```
+
+### Key Components
+- **CohereReranker** (`lightrag/rerank/CohereReranker.java`): Cohere API integration with circuit breaker
+- **JinaReranker** (`lightrag/rerank/JinaReranker.java`): Jina API integration with circuit breaker
+- **NoOpReranker** (`lightrag/rerank/NoOpReranker.java`): Fallback when reranking disabled/unavailable
+- **RerankerFactory** (`lightrag/rerank/RerankerFactory.java`): Selects provider based on config
+
+### Common Issues & Troubleshooting
+
+**Problem**: Reranking returning fewer chunks than expected
+- **Cause**: `min-score` threshold filtering out low-relevance chunks
+- **Fix**: Lower `min-score` (e.g., 0.0 to include all)
+
+**Problem**: Circuit breaker open, falling back to no-op
+- **Cause**: Multiple API failures (timeout, rate limit, invalid key)
+- **Fix**: Check API key validity, increase timeout if needed
+
+## Document Deletion with KG Regeneration
+
+The system supports intelligent document deletion that rebuilds affected knowledge graph entities.
+
+### Usage
+```bash
+# Delete document and rebuild affected entities
+DELETE /projects/{projectId}/documents/{documentId}
+
+# Delete without rebuilding (faster but may leave orphan data)
+DELETE /projects/{projectId}/documents/{documentId}?skipRebuild=true
+```
+
+### Key Components
+- **DocumentDeletionService** (`lightrag/deletion/DocumentDeletionService.java`): Service interface
+- **DocumentDeletionServiceImpl** (`lightrag/deletion/DocumentDeletionServiceImpl.java`): Implementation with rebuild logic
+- **EntityRebuildStrategy** (`lightrag/deletion/EntityRebuildStrategy.java`): Classifies entities for delete vs rebuild
+
+### Rebuild Logic
+1. Entities only sourced from deleted document → **FULL_DELETE**
+2. Entities with multiple sources → **REBUILD** (uses cached extractions)
+
+## Entity Merge Operations
+
+The system supports merging duplicate entities with relationship redirection.
+
+### Configuration
+Merge strategies available:
+- `CONCATENATE` - Join descriptions with separator
+- `KEEP_FIRST` - Use first description
+- `KEEP_LONGEST` - Use longest description
+- `LLM_SUMMARIZE` - Use LLM to synthesize descriptions
+
+### Usage
+```bash
+POST /entities/merge
+{
+  "projectId": "uuid",
+  "sourceEntities": ["Entity A", "Entity B"],
+  "targetEntity": "Entity A",
+  "strategy": "LLM_SUMMARIZE"
+}
+```
+
+### Key Components
+- **EntityMergeService** (`lightrag/merge/EntityMergeService.java`): Service interface
+- **EntityMergeServiceImpl** (`lightrag/merge/EntityMergeServiceImpl.java`): Implementation with self-loop prevention
+- **RelationshipRedirector** (`lightrag/merge/RelationshipRedirector.java`): Handles relation redirection and deduplication
+
+### Self-Loop Prevention
+When merging A into B, relations like A→B become B→B (self-loops) and are automatically filtered out.
+
+## Knowledge Graph Export
+
+The system supports exporting knowledge graphs in multiple formats.
+
+### Usage
+```bash
+# Export as CSV (default)
+GET /projects/{projectId}/export
+
+# Export as Excel
+GET /projects/{projectId}/export?format=excel
+
+# Export as Markdown
+GET /projects/{projectId}/export?format=markdown
+
+# Export as plain text
+GET /projects/{projectId}/export?format=text
+
+# Export only entities
+GET /projects/{projectId}/export?entities=true&relations=false
+```
+
+### Supported Formats
+| Format | MIME Type | Extension |
+|--------|-----------|-----------|
+| CSV | text/csv | .csv |
+| Excel | application/vnd.openxmlformats-officedocument.spreadsheetml.sheet | .xlsx |
+| Markdown | text/markdown | .md |
+| Text | text/plain | .txt |
+
+### Key Components
+- **GraphExporter** (`lightrag/export/GraphExporter.java`): Export interface
+- **CsvGraphExporter** (`lightrag/export/CsvGraphExporter.java`): RFC 4180 compliant CSV
+- **ExcelGraphExporter** (`lightrag/export/ExcelGraphExporter.java`): Streaming Excel with SXSSFWorkbook
+- **MarkdownGraphExporter** (`lightrag/export/MarkdownGraphExporter.java`): Markdown tables
+- **TextGraphExporter** (`lightrag/export/TextGraphExporter.java`): Human-readable plain text
+- **ExportResources** (`lightrag/export/ExportResources.java`): REST endpoint
+
+## Token Usage Tracking
+
+The system tracks token consumption for all LLM operations and exposes it via response headers.
+
+### Response Headers
+- `X-Token-Input` - Total input tokens
+- `X-Token-Output` - Total output tokens  
+- `X-Token-Total` - Sum of input + output
+- `X-Token-Operations` - Number of LLM calls
+
+### Key Components
+- **TokenTracker** (`lightrag/core/TokenTracker.java`): Interface for tracking
+- **TokenTrackerImpl** (`lightrag/core/TokenTrackerImpl.java`): Request-scoped implementation
+- **TokenUsageFilter** (`lightrag/core/TokenUsageFilter.java`): Adds headers to responses
+
+## Chunk Selection Strategies
+
+The system supports multiple strategies for selecting chunks during retrieval.
+
+### Strategies
+- **VECTOR** (default): Pure vector similarity search
+- **WEIGHTED**: Boosts chunks connected to relevant entities/relations
+
+### Key Components
+- **ChunkSelector** (`lightrag/query/ChunkSelector.java`): Strategy interface
+- **VectorChunkSelector** (`lightrag/query/VectorChunkSelector.java`): Default similarity-based
+- **WeightedChunkSelector** (`lightrag/query/WeightedChunkSelector.java`): Entity-aware weighting
+- **ChunkSelectorFactory** (`lightrag/query/ChunkSelectorFactory.java`): Factory for selection
+
 ## Active Technologies
 - Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector (004-retry-backoff)
 - `AgeGraphStorage.java` for graph ops, `PgVectorStorage.java` for vector ops (004-retry-backoff)
 - PostgreSQL 14+ with Apache AGE and pgvector extensions (006-lightrag-official-impl)
+- Apache POI for Excel export (007-lightrag-enhancements)
 
 ## Recent Changes
+- 007-lightrag-enhancements: Added reranker integration (Cohere/Jina), document deletion with KG rebuild, entity merge operations, KG export (CSV/Excel/Markdown/Text), token usage tracking, chunk selection strategies
 - 006-lightrag-official-impl: Added gleaning extraction, keyword extraction, context merging, token budgets, entity normalization
 - 004-retry-backoff: Added Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector

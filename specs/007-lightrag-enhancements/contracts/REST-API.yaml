@@ -1,0 +1,420 @@
+# REST API Contracts: LightRAG Official Implementation Enhancements
+#
+# Feature: 007-lightrag-enhancements
+# Date: 2025-11-26
+# Purpose: Define new REST endpoints for document deletion, entity merge, and export
+
+openapi: 3.0.3
+info:
+  title: LightRAG Enhancements API
+  description: |
+    New REST endpoints for LightRAG enhancements:
+    - Document deletion with knowledge graph regeneration
+    - Entity merging operations
+    - Knowledge graph export
+    - Token usage headers on existing endpoints
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+    description: Default API path
+
+paths:
+  /projects/{projectId}/documents/{documentId}:
+    delete:
+      summary: Delete document with KG regeneration
+      description: |
+        Deletes a document and intelligently rebuilds affected entities/relations.
+        
+        Behavior:
+        1. Identifies all chunks from the document
+        2. Finds entities/relations sourced from those chunks
+        3. Entities exclusively from deleted doc are removed
+        4. Entities partially sourced are rebuilt using cached extraction results
+        5. Vector embeddings are cleaned up
+        
+        This operation is idempotent - deleting a non-existent document returns 204.
+      operationId: deleteDocument
+      tags:
+        - Documents
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: UUID of the project
+          schema:
+            type: string
+            format: uuid
+        - name: documentId
+          in: path
+          required: true
+          description: UUID of the document to delete
+          schema:
+            type: string
+            format: uuid
+        - name: skipRebuild
+          in: query
+          required: false
+          description: Skip KG rebuild (just delete chunks, faster but may leave stale entities)
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Document deleted with rebuild details
+          headers:
+            X-Token-Input:
+              description: Total input tokens used for any LLM calls during rebuild
+              schema:
+                type: integer
+            X-Token-Output:
+              description: Total output tokens used for any LLM calls during rebuild
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeRebuildResult'
+        '204':
+          description: Document did not exist (idempotent success)
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error during deletion or rebuild
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{projectId}/entities/merge:
+    post:
+      summary: Merge multiple entities into one
+      description: |
+        Merges multiple source entities into a single target entity.
+        
+        Behavior:
+        1. Validates all source entities exist in project
+        2. Collects all relationships from source entities
+        3. Redirects relationships to target entity
+        4. Deduplicates relationships (same src->tgt pair merged)
+        5. Prevents self-loop relationships
+        6. Merges descriptions using configured strategy
+        7. Deletes source entities and their embeddings
+        
+        Use cases:
+        - Consolidating duplicate entities ("AI", "Artificial Intelligence")
+        - Cleaning up variations ("MIT", "M.I.T.", "Massachusetts Institute of Technology")
+      operationId: mergeEntities
+      tags:
+        - Entities
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: UUID of the project
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntityMergeRequest'
+            examples:
+              basic:
+                summary: Basic merge with concatenation
+                value:
+                  sourceEntities:
+                    - "AI"
+                    - "Artificial Intelligence"
+                    - "Machine Intelligence"
+                  targetEntity: "Artificial Intelligence"
+                  strategy: "CONCATENATE"
+              llm_summarize:
+                summary: Merge with LLM summarization
+                value:
+                  sourceEntities:
+                    - "MIT"
+                    - "M.I.T."
+                    - "Massachusetts Institute of Technology"
+                  targetEntity: "Massachusetts Institute of Technology"
+                  strategy: "LLM_SUMMARIZE"
+                  targetEntityData:
+                    type: "ORGANIZATION"
+      responses:
+        '200':
+          description: Entities merged successfully
+          headers:
+            X-Token-Input:
+              description: Input tokens used (if LLM_SUMMARIZE strategy)
+              schema:
+                type: integer
+            X-Token-Output:
+              description: Output tokens used (if LLM_SUMMARIZE strategy)
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeResult'
+        '400':
+          description: Invalid request (empty sources, invalid strategy, entity not found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict (circular merge detected, target already being modified)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{projectId}/export:
+    get:
+      summary: Export knowledge graph
+      description: |
+        Exports the project's knowledge graph to various formats.
+        
+        Supported formats:
+        - csv: Comma-separated values with entities and relations sections
+        - xlsx: Excel workbook with separate sheets for entities and relations
+        - md: Markdown tables
+        - txt: Plain text format
+        
+        For large graphs (50k+ entities), uses streaming to avoid memory issues.
+        Excel export uses Apache POI SXSSFWorkbook with disk-backed buffering.
+      operationId: exportKnowledgeGraph
+      tags:
+        - Export
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: UUID of the project
+          schema:
+            type: string
+            format: uuid
+        - name: format
+          in: query
+          required: false
+          description: Export format
+          schema:
+            type: string
+            enum: [csv, xlsx, md, txt]
+            default: csv
+        - name: includeVectors
+          in: query
+          required: false
+          description: Include embedding vectors in export (significantly increases file size)
+          schema:
+            type: boolean
+            default: false
+        - name: includeChunks
+          in: query
+          required: false
+          description: Include source text chunks in export
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Export file stream
+          headers:
+            Content-Disposition:
+              description: Suggested filename
+              schema:
+                type: string
+                example: 'attachment; filename="knowledge-graph-2025-11-26.csv"'
+            X-Entity-Count:
+              description: Number of entities exported
+              schema:
+                type: integer
+            X-Relation-Count:
+              description: Number of relations exported
+              schema:
+                type: integer
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            text/markdown:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    EntityMergeRequest:
+      type: object
+      required:
+        - sourceEntities
+        - targetEntity
+      properties:
+        sourceEntities:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: List of entity names to merge (must exist in project)
+          example: ["AI", "Artificial Intelligence", "Machine Intelligence"]
+        targetEntity:
+          type: string
+          minLength: 1
+          description: Name of the target entity (will be created or updated)
+          example: "Artificial Intelligence"
+        strategy:
+          type: string
+          enum: [CONCATENATE, KEEP_FIRST, KEEP_LONGEST, LLM_SUMMARIZE]
+          default: CONCATENATE
+          description: |
+            Strategy for merging entity descriptions:
+            - CONCATENATE: Join all descriptions with " | " separator
+            - KEEP_FIRST: Keep the first description (or target's existing)
+            - KEEP_LONGEST: Keep the longest description
+            - LLM_SUMMARIZE: Use LLM to create unified description (costs tokens)
+        targetEntityData:
+          type: object
+          additionalProperties: true
+          description: |
+            Optional data to set on target entity:
+            - type: Entity type (PERSON, ORGANIZATION, LOCATION, etc.)
+            - Any other entity properties
+          example:
+            type: "CONCEPT"
+
+    MergeResult:
+      type: object
+      properties:
+        targetEntity:
+          $ref: '#/components/schemas/Entity'
+        relationsRedirected:
+          type: integer
+          description: Number of relationships redirected to target
+          example: 15
+        sourceEntitiesDeleted:
+          type: integer
+          description: Number of source entities removed
+          example: 3
+        relationsDeduped:
+          type: integer
+          description: Number of duplicate relations merged
+          example: 2
+
+    KnowledgeRebuildResult:
+      type: object
+      properties:
+        documentId:
+          type: string
+          format: uuid
+          description: ID of the deleted document
+        entitiesDeleted:
+          type: array
+          items:
+            type: string
+          description: Entity names that were fully removed
+          example: ["Specific Character A", "Event From Doc Only"]
+        entitiesRebuilt:
+          type: array
+          items:
+            type: string
+          description: Entity names that had descriptions updated
+          example: ["Main Character", "Important Location"]
+        relationsDeleted:
+          type: integer
+          description: Count of fully removed relations
+          example: 5
+        relationsRebuilt:
+          type: integer
+          description: Count of relations with updated descriptions
+          example: 3
+        chunksDeleted:
+          type: integer
+          description: Number of text chunks removed
+          example: 42
+        errors:
+          type: array
+          items:
+            type: string
+          description: Any non-fatal errors during rebuild
+          example: []
+
+    Entity:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Canonical entity name
+          example: "Artificial Intelligence"
+        type:
+          type: string
+          description: Entity type
+          example: "CONCEPT"
+        description:
+          type: string
+          description: Entity description (may be summarized)
+          example: "A field of computer science focused on creating intelligent machines..."
+        sourceIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: IDs of source chunks
+        filePaths:
+          type: array
+          items:
+            type: string
+          description: File paths of source documents
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error type/code
+          example: "ENTITY_NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Entity 'Unknown Entity' not found in project"
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error context
+
+  # Token usage headers added to existing endpoints
+  # Note: These headers are added to ALL existing endpoints via a JAX-RS ContainerResponseFilter
+
+tags:
+  - name: Documents
+    description: Document management operations
+  - name: Entities
+    description: Entity management operations
+  - name: Export
+    description: Knowledge graph export operations

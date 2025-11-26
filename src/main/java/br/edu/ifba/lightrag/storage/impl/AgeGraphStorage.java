@@ -881,6 +881,341 @@ public class AgeGraphStorage implements GraphStorage {
         }, executor);
     }
     
+    // ===== Batch Query Operations (spec-007) =====
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<List<Entity>> getEntitiesBySourceChunks(@NotNull String projectId, @NotNull List<String> chunkIds) {
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            List<Entity> matchingEntities = new ArrayList<>();
+            
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
+                
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                
+                // Query all entities and filter by source_chunk_ids in Java
+                // AGE doesn't support array operations like ANY() well, so we do post-filtering
+                String cypher = "MATCH (e:Entity) RETURN e";
+                String sql = String.format(
+                    "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (e agtype)",
+                    graphName,
+                    cypher
+                );
+                
+                java.util.Set<String> chunkIdSet = new java.util.HashSet<>(chunkIds);
+                
+                try (ResultSet rs = stmt.executeQuery(sql)) {
+                    while (rs.next()) {
+                        String agtypeJson = rs.getString(1);
+                        Entity entity = parseEntityFromAgtype(agtypeJson);
+                        if (entity != null) {
+                            // Check if entity has any of the specified chunk IDs
+                            for (String chunkId : entity.getSourceChunkIds()) {
+                                if (chunkIdSet.contains(chunkId)) {
+                                    matchingEntities.add(entity);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                logger.debug("Found {} entities by source chunks on graph {} for project {}", 
+                    matchingEntities.size(), graphName, projectId);
+                
+            } catch (SQLException e) {
+                logger.error("Failed to get entities by source chunks for project: {}", projectId, e);
+                throw new RuntimeException("Failed to get entities by source chunks", e);
+            }
+            
+            return matchingEntities;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<List<Relation>> getRelationsBySourceChunks(@NotNull String projectId, @NotNull List<String> chunkIds) {
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            List<Relation> matchingRelations = new ArrayList<>();
+            
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
+                
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                
+                // Query all relations and filter by source_chunk_ids in Java
+                String cypher = "MATCH (src:Entity)-[r:RELATED_TO]->(tgt:Entity) RETURN src.name, tgt.name, r";
+                String sql = String.format(
+                    "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (src_name agtype, tgt_name agtype, r agtype)",
+                    graphName,
+                    cypher
+                );
+                
+                java.util.Set<String> chunkIdSet = new java.util.HashSet<>(chunkIds);
+                
+                try (ResultSet rs = stmt.executeQuery(sql)) {
+                    while (rs.next()) {
+                        String srcName = cleanAgtypeString(rs.getString(1));
+                        String tgtName = cleanAgtypeString(rs.getString(2));
+                        String relationJson = rs.getString(3);
+                        
+                        Relation relation = parseRelationFromAgtype(srcName, tgtName, relationJson);
+                        if (relation != null) {
+                            // Check if relation has any of the specified chunk IDs
+                            for (String chunkId : relation.getSourceChunkIds()) {
+                                if (chunkIdSet.contains(chunkId)) {
+                                    matchingRelations.add(relation);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                logger.debug("Found {} relations by source chunks on graph {} for project {}", 
+                    matchingRelations.size(), graphName, projectId);
+                
+            } catch (SQLException e) {
+                logger.error("Failed to get relations by source chunks for project: {}", projectId, e);
+                throw new RuntimeException("Failed to get relations by source chunks", e);
+            }
+            
+            return matchingRelations;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<List<Entity>> getEntitiesBatch(@NotNull String projectId, int offset, int limit) {
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            String cypher = String.format(
+                "MATCH (e:Entity) RETURN e SKIP %d LIMIT %d",
+                offset,
+                limit
+            );
+            
+            List<Entity> results = queryCypherForEntities(graphName, cypher);
+            logger.debug("Retrieved batch of {} entities (offset={}, limit={}) on graph {} for project {}", 
+                results.size(), offset, limit, graphName, projectId);
+            return results;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<List<Relation>> getRelationsBatch(@NotNull String projectId, int offset, int limit) {
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            String cypher = String.format(
+                "MATCH (src:Entity)-[r:RELATED_TO]->(tgt:Entity) RETURN src.name, tgt.name, r SKIP %d LIMIT %d",
+                offset,
+                limit
+            );
+            
+            List<Relation> results = queryCypherForRelations(graphName, cypher);
+            logger.debug("Retrieved batch of {} relations (offset={}, limit={}) on graph {} for project {}", 
+                results.size(), offset, limit, graphName, projectId);
+            return results;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<Integer> deleteEntities(@NotNull String projectId, @NotNull java.util.Set<String> entityNames) {
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            int deletedCount = 0;
+            
+            try (Connection conn = config.getConnection()) {
+                conn.setAutoCommit(false);
+                
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("LOAD 'age'");
+                    stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                    
+                    for (String entityName : entityNames) {
+                        String normalizedName = normalizeEntityName(entityName);
+                        String cypher = String.format(
+                            "MATCH (e:Entity {name: '%s'}) DETACH DELETE e",
+                            escapeCypher(normalizedName)
+                        );
+                        
+                        String sql = String.format(
+                            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)",
+                            graphName,
+                            cypher
+                        );
+                        
+                        stmt.execute(sql);
+                        deletedCount++;
+                    }
+                    
+                    conn.commit();
+                    logger.debug("Deleted {} entities on graph {} for project {}", deletedCount, graphName, projectId);
+                    
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                }
+                
+            } catch (SQLException e) {
+                logger.error("Failed to batch delete entities for project: {}", projectId, e);
+                throw new RuntimeException("Failed to batch delete entities", e);
+            }
+            
+            return deletedCount;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<Integer> deleteRelations(@NotNull String projectId, @NotNull java.util.Set<String> relationKeys) {
+        if (relationKeys == null || relationKeys.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            int deletedCount = 0;
+            
+            try (Connection conn = config.getConnection()) {
+                conn.setAutoCommit(false);
+                
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("LOAD 'age'");
+                    stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                    
+                    for (String relationKey : relationKeys) {
+                        // Parse relation key in format "source->target"
+                        String[] parts = relationKey.split("->");
+                        if (parts.length != 2) {
+                            logger.warn("Invalid relation key format: {}", relationKey);
+                            continue;
+                        }
+                        
+                        String srcId = normalizeEntityName(parts[0].trim());
+                        String tgtId = normalizeEntityName(parts[1].trim());
+                        
+                        String cypher = String.format(
+                            "MATCH (src:Entity {name: '%s'})-[r:RELATED_TO]->(tgt:Entity {name: '%s'}) DELETE r",
+                            escapeCypher(srcId),
+                            escapeCypher(tgtId)
+                        );
+                        
+                        String sql = String.format(
+                            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (result agtype)",
+                            graphName,
+                            cypher
+                        );
+                        
+                        stmt.execute(sql);
+                        deletedCount++;
+                    }
+                    
+                    conn.commit();
+                    logger.debug("Deleted {} relations on graph {} for project {}", deletedCount, graphName, projectId);
+                    
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                }
+                
+            } catch (SQLException e) {
+                logger.error("Failed to batch delete relations for project: {}", projectId, e);
+                throw new RuntimeException("Failed to batch delete relations", e);
+            }
+            
+            return deletedCount;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<Void> updateEntityDescription(@NotNull String projectId, @NotNull String entityName, 
+            @NotNull String description, @NotNull java.util.Set<String> sourceIds) {
+        return CompletableFuture.runAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            try (Connection conn = config.getConnection()) {
+                conn.setAutoCommit(false);
+                
+                String normalizedName = normalizeEntityName(entityName);
+                String sourceChunkIdsJson = serializeSourceChunkIds(new ArrayList<>(sourceIds));
+                
+                String cypher = String.format(
+                    "MATCH (e:Entity {name: '%s'}) " +
+                    "SET e.description = '%s', e.source_chunk_ids = '%s' " +
+                    "RETURN e",
+                    escapeCypher(normalizedName),
+                    escapeCypher(description),
+                    escapeCypher(sourceChunkIdsJson)
+                );
+                
+                executeCypherWithConnection(conn, graphName, cypher);
+                conn.commit();
+                
+                logger.debug("Updated entity description for '{}' on graph {} for project {}", 
+                    entityName, graphName, projectId);
+                
+            } catch (SQLException e) {
+                logger.error("Failed to update entity description for project: {}", projectId, e);
+                throw new RuntimeException("Failed to update entity description", e);
+            }
+        }, executor);
+    }
+    
     @Override
     public void close() throws Exception {
         executor.shutdown();

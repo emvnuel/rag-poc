@@ -562,6 +562,133 @@ public class PgVectorStorage implements VectorStorage {
         }, executor);
     }
     
+    // ========== Batch Delete Operations (spec-007) ==========
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<Integer> deleteEntityEmbeddings(@NotNull String projectId, @NotNull java.util.Set<String> entityNames) {
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection()) {
+                // Delete vectors where type='entity' and content matches any entity name
+                // Entity embeddings store the entity name in the 'content' field
+                StringBuilder sql = new StringBuilder();
+                sql.append(String.format(
+                    "DELETE FROM rag.%s WHERE project_id = ?::uuid AND type = 'entity' AND content IN (",
+                    tableName
+                ));
+                
+                // Build placeholders for IN clause
+                String[] placeholders = new String[entityNames.size()];
+                java.util.Arrays.fill(placeholders, "?");
+                sql.append(String.join(",", placeholders));
+                sql.append(")");
+                
+                try (PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
+                    int paramIndex = 1;
+                    pstmt.setString(paramIndex++, projectId);
+                    
+                    for (String entityName : entityNames) {
+                        pstmt.setString(paramIndex++, entityName);
+                    }
+                    
+                    int deleted = pstmt.executeUpdate();
+                    logger.debug("Deleted {} entity embeddings for project {}", deleted, projectId);
+                    return deleted;
+                }
+                
+            } catch (SQLException e) {
+                logger.error("Failed to delete entity embeddings for project: {}", projectId, e);
+                throw new RuntimeException("Failed to delete entity embeddings", e);
+            }
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<Integer> deleteChunkEmbeddings(@NotNull String projectId, @NotNull java.util.Set<String> chunkIds) {
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection()) {
+                // Delete vectors where type='chunk' and id matches any chunk ID
+                StringBuilder sql = new StringBuilder();
+                sql.append(String.format(
+                    "DELETE FROM rag.%s WHERE project_id = ?::uuid AND type = 'chunk' AND id IN (",
+                    tableName
+                ));
+                
+                // Build placeholders for IN clause
+                String[] placeholders = new String[chunkIds.size()];
+                java.util.Arrays.fill(placeholders, "?::uuid");
+                sql.append(String.join(",", placeholders));
+                sql.append(")");
+                
+                try (PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
+                    int paramIndex = 1;
+                    pstmt.setString(paramIndex++, projectId);
+                    
+                    for (String chunkId : chunkIds) {
+                        pstmt.setObject(paramIndex++, UUID.fromString(chunkId));
+                    }
+                    
+                    int deleted = pstmt.executeUpdate();
+                    logger.debug("Deleted {} chunk embeddings for project {}", deleted, projectId);
+                    return deleted;
+                }
+                
+            } catch (SQLException e) {
+                logger.error("Failed to delete chunk embeddings for project: {}", projectId, e);
+                throw new RuntimeException("Failed to delete chunk embeddings", e);
+            }
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<List<String>> getChunkIdsByDocumentId(@NotNull String projectId, @NotNull String documentId) {
+        return CompletableFuture.supplyAsync(() -> {
+            List<String> chunkIds = new ArrayList<>();
+            
+            try (Connection conn = dataSource.getConnection()) {
+                String sql = String.format(
+                    "SELECT id FROM rag.%s WHERE project_id = ?::uuid AND document_id = ?::uuid AND type = 'chunk'",
+                    tableName
+                );
+                
+                try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    pstmt.setString(1, projectId);
+                    pstmt.setString(2, documentId);
+                    
+                    ResultSet rs = pstmt.executeQuery();
+                    
+                    while (rs.next()) {
+                        chunkIds.add(rs.getString("id"));
+                    }
+                    
+                    logger.debug("Found {} chunks for document {} in project {}", chunkIds.size(), documentId, projectId);
+                }
+                
+            } catch (SQLException e) {
+                logger.error("Failed to get chunk IDs for document: {} in project: {}", documentId, projectId, e);
+                throw new RuntimeException("Failed to get chunk IDs by document ID", e);
+            }
+            
+            return chunkIds;
+        }, executor);
+    }
+    
     // ========== Helper Methods ==========
     
     /**

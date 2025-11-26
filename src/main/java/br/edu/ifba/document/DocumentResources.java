@@ -173,19 +173,29 @@ public class DocumentResources {
     /**
      * Deletes a document and all associated data (vectors and graph entities/relations).
      * 
+     * By default, shared entities (referenced by multiple documents) are intelligently
+     * rebuilt using cached extraction data. Use skipRebuild=true to delete all affected
+     * entities without rebuilding.
+     * 
      * @param id The document ID to delete
      * @param projectId The project ID (required for graph cleanup)
+     * @param skipRebuild If true, skips KG rebuild and deletes all affected entities (default: false)
      * @return Response with no content (204) on success
      */
     @DELETE
     @Path("/{id}")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response delete(@PathParam("id") final UUID id, @QueryParam("projectId") final UUID projectId) {
+    public Response delete(
+        @PathParam("id") final UUID id, 
+        @QueryParam("projectId") final UUID projectId,
+        @QueryParam("skipRebuild") final Boolean skipRebuild
+    ) {
         if (projectId == null) {
             throw new IllegalArgumentException("Project ID is required");
         }
         
-        documentService.delete(id, projectId);
+        final boolean skip = skipRebuild != null && skipRebuild;
+        documentService.delete(id, projectId, skip);
         return Response.noContent().build();
     }
 }

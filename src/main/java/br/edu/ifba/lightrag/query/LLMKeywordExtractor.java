@@ -1,6 +1,7 @@
 package br.edu.ifba.lightrag.query;
 
 import br.edu.ifba.lightrag.core.LightRAGExtractionConfig;
+import br.edu.ifba.lightrag.core.TokenUsage;
 import br.edu.ifba.lightrag.llm.LLMFunction;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -9,6 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -127,8 +129,11 @@ public class LLMKeywordExtractor implements KeywordExtractor {
         // Build user prompt
         String userPrompt = String.format(KEYWORD_EXTRACTION_USER_PROMPT_TEMPLATE, query);
         
-        // Call LLM
-        return llmFunction.apply(userPrompt, KEYWORD_EXTRACTION_SYSTEM_PROMPT)
+        // Pass operation type for token tracking (T069)
+        Map<String, Object> kwargs = Map.of("operation_type", TokenUsage.OP_KEYWORD_EXTRACTION);
+        
+        // Call LLM with operation type for token tracking
+        return llmFunction.apply(userPrompt, KEYWORD_EXTRACTION_SYSTEM_PROMPT, null, kwargs)
             .thenApply(response -> {
                 KeywordResult result = parseResponse(response, queryHash);
                 

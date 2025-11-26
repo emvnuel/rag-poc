@@ -4,6 +4,8 @@ import br.edu.ifba.chat.ChatMessage;
 import br.edu.ifba.chat.LlmChatClient;
 import br.edu.ifba.chat.LlmChatRequest;
 import br.edu.ifba.chat.LlmChatResponse;
+import br.edu.ifba.lightrag.core.TokenTracker;
+import br.edu.ifba.lightrag.core.TokenUsage;
 import br.edu.ifba.lightrag.llm.LLMFunction;
 import io.quarkus.arc.Arc;
 import io.quarkus.arc.ManagedContext;
@@ -52,6 +54,9 @@ public class QuarkusLLMAdapter implements LLMFunction {
     @Inject
     @RestClient
     LlmChatClient chatClient;
+
+    @Inject
+    TokenTracker tokenTracker;
 
     @ConfigProperty(name = "chat.model")
     String defaultModel;
@@ -133,6 +138,23 @@ public class QuarkusLLMAdapter implements LLMFunction {
                 }
 
                 final String content = response.choices().get(0).message().content();
+
+                // Track token usage (T067: Integrate TokenTracker into QuarkusLLMAdapter)
+                if (response.usage() != null) {
+                    final int inputTokens = response.usage().promptTokens() != null 
+                        ? response.usage().promptTokens() : 0;
+                    final int outputTokens = response.usage().completionTokens() != null 
+                        ? response.usage().completionTokens() : 0;
+                    
+                    // Determine operation type from kwargs or default to QUERY
+                    final String operationType = (String) kwargs.getOrDefault(
+                        "operation_type", TokenUsage.OP_QUERY);
+                    
+                    tokenTracker.track(TokenUsage.now(operationType, model, inputTokens, outputTokens));
+                    
+                    LOG.debugf("Tracked LLM tokens: op=%s model=%s input=%d output=%d",
+                        operationType, model, inputTokens, outputTokens);
+                }
 
                 final String tokenInfo = response.usage() != null ? String.valueOf(response.usage().totalTokens()) : "unknown";
                 LOG.debugf("LLM response received - length: %d characters, tokens: %s",

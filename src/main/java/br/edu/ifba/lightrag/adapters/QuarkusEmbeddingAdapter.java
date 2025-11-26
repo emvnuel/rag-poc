@@ -3,6 +3,8 @@ package br.edu.ifba.lightrag.adapters;
 import br.edu.ifba.document.EmbeddingRequest;
 import br.edu.ifba.document.EmbeddingResponse;
 import br.edu.ifba.document.LlmEmbeddingClient;
+import br.edu.ifba.lightrag.core.TokenTracker;
+import br.edu.ifba.lightrag.core.TokenUsage;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -28,6 +30,9 @@ public class QuarkusEmbeddingAdapter implements EmbeddingFunction {
     @Inject
     @RestClient
     LlmEmbeddingClient embeddingClient;
+
+    @Inject
+    TokenTracker tokenTracker;
 
     @ConfigProperty(name = "embedding.model")
     String embeddingModel;
@@ -106,6 +111,20 @@ public class QuarkusEmbeddingAdapter implements EmbeddingFunction {
             LOG.debugf("Successfully generated %d embeddings with dimension %d",
                     Integer.valueOf(embeddings.size()),
                     Integer.valueOf(embeddings.get(0).length));
+
+            // Track token usage (T068: Integrate TokenTracker into QuarkusEmbeddingAdapter)
+            // Embeddings have input tokens (text) but no output tokens
+            if (response.getPromptEvalCount() != null) {
+                tokenTracker.track(TokenUsage.now(
+                    TokenUsage.OP_EMBEDDING,
+                    embeddingModel,
+                    response.getPromptEvalCount(),
+                    0 // Embeddings don't produce output tokens
+                ));
+                
+                LOG.debugf("Tracked embedding tokens: model=%s input=%d",
+                    embeddingModel, response.getPromptEvalCount());
+            }
 
             return CompletableFuture.completedFuture(embeddings);
                 

@@ -13,10 +13,20 @@ public record ChatRequest(
     @NotBlank(message = "Message is required")
     String message,
     
-    List<ChatMessage> history
+    List<ChatMessage> history,
+    
+    /**
+     * Optional flag to enable/disable reranking for this request.
+     * If null, uses the global configuration (lightrag.rerank.enabled).
+     */
+    Boolean rerank
     
 ) {
     public ChatRequest(final UUID projectId, final String message) {
-        this(projectId, message, null);
+        this(projectId, message, null, null);
+    }
+    
+    public ChatRequest(final UUID projectId, final String message, final List<ChatMessage> history) {
+        this(projectId, message, history, null);
     }
 }

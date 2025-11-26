@@ -147,6 +147,80 @@ public class InMemoryVectorStorage implements VectorStorage {
         return CompletableFuture.completedFuture((long) storage.size());
     }
     
+    // ===== Batch Delete Operations (spec-007) =====
+    
+    @Override
+    public CompletableFuture<Integer> deleteEntityEmbeddings(@NotNull String projectId, @NotNull Set<String> entityNames) {
+        ensureInitialized();
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            int deletedCount = 0;
+            
+            // Find and delete vectors where type='entity' and content matches any entity name
+            List<String> toDelete = new ArrayList<>();
+            for (VectorEntry entry : storage.values()) {
+                if ("entity".equals(entry.metadata().type()) && entityNames.contains(entry.metadata().content())) {
+                    toDelete.add(entry.id());
+                }
+            }
+            
+            for (String id : toDelete) {
+                if (storage.remove(id) != null) {
+                    deletedCount++;
+                }
+            }
+            
+            logger.debug("Deleted {} entity embeddings for project {}", deletedCount, projectId);
+            return deletedCount;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<Integer> deleteChunkEmbeddings(@NotNull String projectId, @NotNull Set<String> chunkIds) {
+        ensureInitialized();
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            int deletedCount = 0;
+            
+            // Find and delete vectors where type='chunk' and id matches any chunk ID
+            for (String chunkId : chunkIds) {
+                if (storage.remove(chunkId) != null) {
+                    deletedCount++;
+                }
+            }
+            
+            logger.debug("Deleted {} chunk embeddings for project {}", deletedCount, projectId);
+            return deletedCount;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<List<String>> getChunkIdsByDocumentId(@NotNull String projectId, @NotNull String documentId) {
+        ensureInitialized();
+        
+        return CompletableFuture.supplyAsync(() -> {
+            List<String> chunkIds = new ArrayList<>();
+            
+            // Find all chunks belonging to this document
+            for (VectorEntry entry : storage.values()) {
+                if ("chunk".equals(entry.metadata().type()) 
+                    && documentId.equals(entry.metadata().documentId())
+                    && (projectId.equals(entry.metadata().projectId()) || entry.metadata().projectId() == null)) {
+                    chunkIds.add(entry.id());
+                }
+            }
+            
+            logger.debug("Found {} chunks for document {} in project {}", chunkIds.size(), documentId, projectId);
+            return chunkIds;
+        });
+    }
+    
     @Override
     public void close() throws Exception {
         if (initialized) {

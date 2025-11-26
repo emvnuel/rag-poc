@@ -233,6 +233,132 @@ public final class Relation {
         }
     }
     
+    /**
+     * Checks if this relation is a self-loop (source equals target).
+     * 
+     * Self-loops are typically invalid and should be filtered out during extraction.
+     *
+     * @return true if srcId equals tgtId (case-insensitive)
+     * @since spec-007
+     */
+    public boolean isSelfLoop() {
+        return srcId.equalsIgnoreCase(tgtId);
+    }
+    
+    /**
+     * Creates a new Relation with redirected source or target entity.
+     * 
+     * Used during entity merging to redirect relations from a merged entity
+     * to the target (surviving) entity.
+     *
+     * @param oldEntityName the entity name being replaced
+     * @param newEntityName the entity name to redirect to
+     * @return new Relation with the entity reference updated, or this if no change needed
+     * @since spec-007
+     */
+    public Relation redirect(@NotNull String oldEntityName, @NotNull String newEntityName) {
+        Objects.requireNonNull(oldEntityName, "oldEntityName must not be null");
+        Objects.requireNonNull(newEntityName, "newEntityName must not be null");
+        
+        boolean srcMatches = srcId.equalsIgnoreCase(oldEntityName);
+        boolean tgtMatches = tgtId.equalsIgnoreCase(oldEntityName);
+        
+        if (!srcMatches && !tgtMatches) {
+            return this;
+        }
+        
+        String newSrcId = srcMatches ? newEntityName : srcId;
+        String newTgtId = tgtMatches ? newEntityName : tgtId;
+        
+        return new Relation(newSrcId, newTgtId, description, keywords, weight, filePath, documentId, sourceChunkIds);
+    }
+    
+    /**
+     * Merges this relation with another relation using the specified strategy.
+     * 
+     * The resulting relation combines source chunk IDs from both relations
+     * and merges descriptions based on the strategy. Weight is summed.
+     *
+     * @param other the relation to merge with
+     * @param strategy how to merge descriptions (CONCATENATE, KEEP_FIRST, KEEP_LONGEST)
+     * @param separator separator for CONCATENATE strategy
+     * @return new Relation instance with merged data
+     * @throws IllegalArgumentException if relations don't have the same src/tgt pair
+     * @since spec-007
+     */
+    public Relation mergeWith(@NotNull Relation other, @NotNull String strategy, @NotNull String separator) {
+        Objects.requireNonNull(other, "other must not be null");
+        Objects.requireNonNull(strategy, "strategy must not be null");
+        Objects.requireNonNull(separator, "separator must not be null");
+        
+        // Validate that relations connect the same entity pair
+        if (!srcId.equalsIgnoreCase(other.srcId) || !tgtId.equalsIgnoreCase(other.tgtId)) {
+            throw new IllegalArgumentException(
+                    "Cannot merge relations with different entity pairs: " +
+                    srcId + "->" + tgtId + " vs " + other.srcId + "->" + other.tgtId);
+        }
+        
+        // Merge descriptions based on strategy
+        String mergedDescription = switch (strategy.toUpperCase()) {
+            case "CONCATENATE" -> {
+                if (this.description.equals(other.description)) {
+                    yield this.description;
+                }
+                yield this.description + separator + other.description;
+            }
+            case "KEEP_FIRST" -> this.description;
+            case "KEEP_LONGEST" -> this.description.length() >= other.description.length() 
+                    ? this.description 
+                    : other.description;
+            default -> this.description + separator + other.description;
+        };
+        
+        // Merge keywords (deduplicated)
+        String mergedKeywords = mergeKeywords(this.keywords, other.keywords);
+        
+        // Sum weights
+        double mergedWeight = this.weight + other.weight;
+        
+        // Merge source chunk IDs (deduplicated, respecting max)
+        List<String> mergedChunkIds = new ArrayList<>(this.sourceChunkIds);
+        for (String chunkId : other.sourceChunkIds) {
+            if (!mergedChunkIds.contains(chunkId)) {
+                mergedChunkIds.add(chunkId);
+            }
+        }
+        // Apply FIFO eviction if needed
+        while (mergedChunkIds.size() > MAX_SOURCE_CHUNK_IDS) {
+            mergedChunkIds.remove(0);
+        }
+        
+        return new Relation(srcId, tgtId, mergedDescription, mergedKeywords, mergedWeight, filePath, documentId, mergedChunkIds);
+    }
+    
+    /**
+     * Merges two keyword strings by combining unique keywords.
+     */
+    private static String mergeKeywords(String keywords1, String keywords2) {
+        if (keywords1.equals(keywords2)) {
+            return keywords1;
+        }
+        
+        java.util.Set<String> uniqueKeywords = new java.util.LinkedHashSet<>();
+        for (String kw : keywords1.split(",")) {
+            String trimmed = kw.trim();
+            if (!trimmed.isEmpty()) {
+                uniqueKeywords.add(trimmed);
+            }
+        }
+        for (String kw : keywords2.split(",")) {
+            String trimmed = kw.trim();
+            if (!trimmed.isEmpty()) {
+                uniqueKeywords.add(trimmed);
+            }
+        }
+        
+        return String.join(", ", uniqueKeywords);
+    }
+    
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
