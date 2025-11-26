@@ -332,14 +332,16 @@ public class AgeGraphStorage implements GraphStorage {
                 // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                 
                 String normalizedName = normalizeEntityName(entity.getEntityName());
+                String sourceChunkIdsJson = serializeSourceChunkIds(entity.getSourceChunkIds());
                 String mergeCypher = String.format(
                     "MERGE (e:Entity {name: '%s'}) " +
-                    "SET e.entity_type = '%s', e.description = '%s', e.document_id = %s " +
+                    "SET e.entity_type = '%s', e.description = '%s', e.document_id = %s, e.source_chunk_ids = '%s' " +
                     "RETURN e",
                     escapeCypher(normalizedName),
                     escapeCypher(entity.getEntityType()),
                     escapeCypher(entity.getDescription()),
-                    entity.getDocumentId() != null ? "'" + escapeCypher(entity.getDocumentId()) + "'" : "null"
+                    entity.getDocumentId() != null ? "'" + escapeCypher(entity.getDocumentId()) + "'" : "null",
+                    escapeCypher(sourceChunkIdsJson)
                 );
                 logger.debug("Executing MERGE for entity '{}' (original: '{}') on graph {} for project {}: {}", 
                     normalizedName, entity.getEntityName(), graphName, projectId, mergeCypher);
@@ -377,14 +379,16 @@ public class AgeGraphStorage implements GraphStorage {
                 
                 for (Entity entity : entities) {
                     String normalizedName = normalizeEntityName(entity.getEntityName());
+                    String sourceChunkIdsJson = serializeSourceChunkIds(entity.getSourceChunkIds());
                     String mergeCypher = String.format(
                         "MERGE (e:Entity {name: '%s'}) " +
-                        "SET e.entity_type = '%s', e.description = '%s', e.document_id = %s " +
+                        "SET e.entity_type = '%s', e.description = '%s', e.document_id = %s, e.source_chunk_ids = '%s' " +
                         "RETURN e",
                         escapeCypher(normalizedName),
                         escapeCypher(entity.getEntityType()),
                         escapeCypher(entity.getDescription()),
-                        entity.getDocumentId() != null ? "'" + escapeCypher(entity.getDocumentId()) + "'" : "null"
+                        entity.getDocumentId() != null ? "'" + escapeCypher(entity.getDocumentId()) + "'" : "null",
+                        escapeCypher(sourceChunkIdsJson)
                     );
                     logger.debug("Executing batch MERGE for entity '{}' (original: '{}') on graph {} for project {}: {}", 
                         normalizedName, entity.getEntityName(), graphName, projectId, mergeCypher);
@@ -421,18 +425,20 @@ public class AgeGraphStorage implements GraphStorage {
                     
                     String normalizedSrc = normalizeEntityName(relation.getSrcId());
                     String normalizedTgt = normalizeEntityName(relation.getTgtId());
+                    String sourceChunkIdsJson = serializeSourceChunkIds(relation.getSourceChunkIds());
                     String mergeCypher = String.format(Locale.US,
                         "MERGE (src:Entity {name: '%s'}) " +
                         "MERGE (tgt:Entity {name: '%s'}) " +
                         "MERGE (src)-[r:RELATED_TO]->(tgt) " +
-                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.document_id = %s " +
+                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.document_id = %s, r.source_chunk_ids = '%s' " +
                         "RETURN r",
                         escapeCypher(normalizedSrc),
                         escapeCypher(normalizedTgt),
                         escapeCypher(relation.getDescription()),
                         escapeCypher(relation.getKeywords()),
                         relation.getWeight(),
-                        relation.getDocumentId() != null ? "'" + escapeCypher(relation.getDocumentId()) + "'" : "null"
+                        relation.getDocumentId() != null ? "'" + escapeCypher(relation.getDocumentId()) + "'" : "null",
+                        escapeCypher(sourceChunkIdsJson)
                     );
                     logger.debug("Executing MERGE for relation {} -> {} on graph {} for project {}", 
                         normalizedSrc, normalizedTgt, graphName, projectId);
@@ -474,24 +480,26 @@ public class AgeGraphStorage implements GraphStorage {
                     // Case normalization applied to prevent "TechCorp" vs "Techcorp" duplicates
                     
                     for (Relation relation : relations) {
-                    String normalizedSrc = normalizeEntityName(relation.getSrcId());
-                    String normalizedTgt = normalizeEntityName(relation.getTgtId());
-                    String mergeCypher = String.format(Locale.US,
-                        "MERGE (src:Entity {name: '%s'}) " +
-                        "MERGE (tgt:Entity {name: '%s'}) " +
-                        "MERGE (src)-[r:RELATED_TO]->(tgt) " +
-                        "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.document_id = %s " +
-                        "RETURN r",
-                        escapeCypher(normalizedSrc),
-                        escapeCypher(normalizedTgt),
-                        escapeCypher(relation.getDescription()),
-                        escapeCypher(relation.getKeywords()),
-                        relation.getWeight(),
-                        relation.getDocumentId() != null ? "'" + escapeCypher(relation.getDocumentId()) + "'" : "null"
-                    );
-                    logger.debug("Executing MERGE for relation {} -> {} on graph {} for project {}", 
-                        normalizedSrc, normalizedTgt, graphName, projectId);
-                    executeCypherWithConnection(conn, graphName, mergeCypher);
+                        String normalizedSrc = normalizeEntityName(relation.getSrcId());
+                        String normalizedTgt = normalizeEntityName(relation.getTgtId());
+                        String sourceChunkIdsJson = serializeSourceChunkIds(relation.getSourceChunkIds());
+                        String mergeCypher = String.format(Locale.US,
+                            "MERGE (src:Entity {name: '%s'}) " +
+                            "MERGE (tgt:Entity {name: '%s'}) " +
+                            "MERGE (src)-[r:RELATED_TO]->(tgt) " +
+                            "SET r.description = '%s', r.keywords = '%s', r.weight = %f, r.document_id = %s, r.source_chunk_ids = '%s' " +
+                            "RETURN r",
+                            escapeCypher(normalizedSrc),
+                            escapeCypher(normalizedTgt),
+                            escapeCypher(relation.getDescription()),
+                            escapeCypher(relation.getKeywords()),
+                            relation.getWeight(),
+                            relation.getDocumentId() != null ? "'" + escapeCypher(relation.getDocumentId()) + "'" : "null",
+                            escapeCypher(sourceChunkIdsJson)
+                        );
+                        logger.debug("Executing MERGE for relation {} -> {} on graph {} for project {}", 
+                            normalizedSrc, normalizedTgt, graphName, projectId);
+                        executeCypherWithConnection(conn, graphName, mergeCypher);
                     }
                     
                     conn.commit();
@@ -1074,6 +1082,8 @@ public class AgeGraphStorage implements GraphStorage {
             String name = getStringProperty(node, "name");
             String entityType = getStringProperty(node, "entity_type");
             String description = getStringProperty(node, "description");
+            String sourceChunkIdsJson = getStringProperty(node, "source_chunk_ids");
+            List<String> sourceChunkIds = deserializeSourceChunkIds(sourceChunkIdsJson);
             
             if (name == null) return null;
             
@@ -1081,6 +1091,7 @@ public class AgeGraphStorage implements GraphStorage {
                 .entityName(name)
                 .entityType(entityType != null ? entityType : "UNKNOWN")
                 .description(description != null ? description : "")
+                .sourceChunkIds(sourceChunkIds)
                 .build();
                 
         } catch (Exception e) {
@@ -1099,6 +1110,8 @@ public class AgeGraphStorage implements GraphStorage {
             String description = getStringProperty(node, "description");
             String keywords = getStringProperty(node, "keywords");
             double weight = getDoubleProperty(node, "weight", 1.0);
+            String sourceChunkIdsJson = getStringProperty(node, "source_chunk_ids");
+            List<String> sourceChunkIds = deserializeSourceChunkIds(sourceChunkIdsJson);
             
             return Relation.builder()
                 .srcId(srcName)
@@ -1106,6 +1119,7 @@ public class AgeGraphStorage implements GraphStorage {
                 .description(description != null ? description : "RELATED_TO")
                 .keywords(keywords != null ? keywords : "")
                 .weight(weight)
+                .sourceChunkIds(sourceChunkIds)
                 .build();
                 
         } catch (Exception e) {
@@ -1157,6 +1171,43 @@ public class AgeGraphStorage implements GraphStorage {
         final String normalized = name.toLowerCase().trim();
         logger.debug("Normalizing entity name: '{}' -> '{}'", name, normalized);
         return normalized;
+    }
+    
+    /**
+     * Serializes a list of source chunk IDs to a JSON array string.
+     * 
+     * @param sourceChunkIds the list of chunk IDs (may be null or empty)
+     * @return JSON array string like ["uuid1", "uuid2"] or "[]" if empty/null
+     */
+    private String serializeSourceChunkIds(List<String> sourceChunkIds) {
+        if (sourceChunkIds == null || sourceChunkIds.isEmpty()) {
+            return "[]";
+        }
+        try {
+            return objectMapper.writeValueAsString(sourceChunkIds);
+        } catch (Exception e) {
+            logger.warn("Failed to serialize source chunk IDs: {}", e.getMessage());
+            return "[]";
+        }
+    }
+    
+    /**
+     * Deserializes a JSON array string to a list of source chunk IDs.
+     * 
+     * @param jsonArray the JSON array string (may be null or empty)
+     * @return list of chunk IDs or empty list if parsing fails
+     */
+    private List<String> deserializeSourceChunkIds(String jsonArray) {
+        if (jsonArray == null || jsonArray.isEmpty() || "[]".equals(jsonArray)) {
+            return new ArrayList<>();
+        }
+        try {
+            return objectMapper.readValue(jsonArray, 
+                objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+        } catch (Exception e) {
+            logger.warn("Failed to deserialize source chunk IDs: {}", e.getMessage());
+            return new ArrayList<>();
+        }
     }
     
     /**

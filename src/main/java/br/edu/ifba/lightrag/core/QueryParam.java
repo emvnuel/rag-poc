@@ -288,6 +288,31 @@ public final class QueryParam {
     }
     
     /**
+     * Creates a Builder initialized with values from this QueryParam.
+     * Useful for creating modified copies of an existing QueryParam.
+     * 
+     * @return Builder pre-populated with this QueryParam's values
+     */
+    public Builder toBuilder() {
+        return new Builder()
+            .mode(this.mode)
+            .onlyNeedContext(this.onlyNeedContext)
+            .onlyNeedPrompt(this.onlyNeedPrompt)
+            .responseType(this.responseType)
+            .stream(this.stream)
+            .topK(this.topK)
+            .chunkTopK(this.chunkTopK)
+            .maxEntityTokens(this.maxEntityTokens)
+            .maxRelationTokens(this.maxRelationTokens)
+            .maxTotalTokens(this.maxTotalTokens)
+            .conversationHistory(this.conversationHistory)
+            .ids(this.ids)
+            .userPrompt(this.userPrompt)
+            .enableRerank(this.enableRerank)
+            .projectId(this.projectId);
+    }
+    
+    /**
      * Creates a default QueryParam with global mode.
      */
     public static QueryParam defaults() {

@@ -65,6 +65,9 @@ public class LightRAG {
     private final String extractionLanguage;
     private final String entityExtractionUserPrompt;
     
+    // Extraction configuration for gleaning and other enhancements (optional)
+    private final LightRAGExtractionConfig extractionConfig;
+    
     // Initialization flag
     private volatile boolean initialized = false;
     
@@ -107,6 +110,7 @@ public class LightRAG {
         private String entityExtractionUserPrompt;
         private EntityResolver entityResolver;
         private DeduplicationConfig deduplicationConfig;
+        private LightRAGExtractionConfig extractionConfig;
         
         public Builder config(@NotNull LightRAGConfig config) {
             this.config = config;
@@ -213,6 +217,11 @@ public class LightRAG {
             return this;
         }
         
+        public Builder extractionConfig(@Nullable LightRAGExtractionConfig extractionConfig) {
+            this.extractionConfig = extractionConfig;
+            return this;
+        }
+        
         public LightRAG build() {
             if (llmFunction == null) {
                 throw new IllegalStateException("llmFunction is required");
@@ -290,7 +299,8 @@ public class LightRAG {
                 extractionLanguage,
                 entityExtractionUserPrompt,
                 entityResolver,
-                deduplicationConfig
+                deduplicationConfig,
+                extractionConfig
             );
         }
     }
@@ -319,7 +329,8 @@ public class LightRAG {
         @NotNull String extractionLanguage,
         @NotNull String entityExtractionUserPrompt,
         @Nullable EntityResolver entityResolver,
-        @Nullable DeduplicationConfig deduplicationConfig
+        @Nullable DeduplicationConfig deduplicationConfig,
+        @Nullable LightRAGExtractionConfig extractionConfig
     ) {
         this.config = config;
         this.llmFunction = llmFunction;
@@ -332,6 +343,7 @@ public class LightRAG {
         this.docStatusStorage = docStatusStorage;
         this.entityResolver = entityResolver;
         this.deduplicationConfig = deduplicationConfig;
+        this.extractionConfig = extractionConfig;
         this.localSystemPrompt = localSystemPrompt;
         this.globalSystemPrompt = globalSystemPrompt;
         this.hybridSystemPrompt = hybridSystemPrompt;
@@ -733,6 +745,18 @@ public class LightRAG {
     
     /**
      * Extracts entities and relations from a single chunk using LLM.
+     * 
+     * <p>This method implements iterative gleaning (T006) per official LightRAG:
+     * <ol>
+     *   <li>Initial extraction pass</li>
+     *   <li>If gleaning enabled, additional passes to capture missed entities</li>
+     *   <li>Merge results from all passes (deduplicate by entity name)</li>
+     *   <li>Stop early if gleaning returns no new entities</li>
+     * </ol></p>
+     * 
+     * @param chunkId unique identifier for the chunk
+     * @param chunkContent the text content to extract from
+     * @return combined extraction results from all passes
      */
     private CompletableFuture<KGExtractionChunkResult> extractKnowledgeGraphFromChunk(
         @NotNull String chunkId,
@@ -744,14 +768,220 @@ public class LightRAG {
         // Use configured user prompt from .env
         String userPrompt = entityExtractionUserPrompt;
         
-        // Call LLM to extract entities and relations
+        // Initial extraction pass
         return llmFunction.apply(userPrompt, filledSystemPrompt)
-            .thenApply(response -> parseKGExtractionResponse(chunkId, response))
+            .thenCompose(response -> {
+                KGExtractionChunkResult initialResult = parseKGExtractionResponse(chunkId, response);
+                
+                // Check if gleaning is enabled and max passes > 0
+                if (extractionConfig == null || !extractionConfig.gleaning().enabled() || extractionConfig.gleaning().maxPasses() <= 0) {
+                    logger.debug("Gleaning disabled for chunk {}, returning initial extraction: {} entities, {} relations", 
+                        chunkId, initialResult.entities().size(), initialResult.relations().size());
+                    return CompletableFuture.completedFuture(initialResult);
+                }
+                
+                // Run gleaning passes
+                return runGleaningPasses(chunkId, chunkContent, response, initialResult);
+            })
             .exceptionally(e -> {
                 logger.warn("Failed to extract KG from chunk {}: {}", chunkId, e.getMessage());
                 return new KGExtractionChunkResult(List.of(), List.of());
             });
     }
+    
+    /**
+     * Runs iterative gleaning passes to capture entities missed in initial extraction.
+     * 
+     * <p>Per official LightRAG implementation:
+     * <ul>
+     *   <li>Each gleaning pass prompts for "many entities were missed"</li>
+     *   <li>Results are merged with previous passes (deduplicate by entity name)</li>
+     *   <li>Stops early if a pass returns no new entities</li>
+     * </ul></p>
+     * 
+     * @param chunkId chunk identifier for logging
+     * @param chunkContent original chunk text
+     * @param previousResponse the response from the previous extraction pass
+     * @param accumulatedResult entities/relations accumulated so far
+     * @return combined result from all passes
+     */
+    private CompletableFuture<KGExtractionChunkResult> runGleaningPasses(
+        @NotNull String chunkId,
+        @NotNull String chunkContent,
+        @NotNull String previousResponse,
+        @NotNull KGExtractionChunkResult accumulatedResult
+    ) {
+        int maxPasses = extractionConfig.gleaning().maxPasses();
+        
+        // Build recursive gleaning chain
+        return runGleaningPassRecursive(chunkId, chunkContent, previousResponse, accumulatedResult, 1, maxPasses);
+    }
+    
+    /**
+     * Recursive helper for gleaning passes.
+     */
+    private CompletableFuture<KGExtractionChunkResult> runGleaningPassRecursive(
+        @NotNull String chunkId,
+        @NotNull String chunkContent,
+        @NotNull String previousResponse,
+        @NotNull KGExtractionChunkResult accumulatedResult,
+        int currentPass,
+        int maxPasses
+    ) {
+        if (currentPass > maxPasses) {
+            logger.debug("Gleaning complete for chunk {}: {} total entities, {} total relations after {} passes", 
+                chunkId, accumulatedResult.entities().size(), accumulatedResult.relations().size(), maxPasses);
+            return CompletableFuture.completedFuture(accumulatedResult);
+        }
+        
+        logger.debug("Starting gleaning pass {}/{} for chunk {}", currentPass, maxPasses, chunkId);
+        
+        // Build gleaning prompt with context of what was already extracted
+        String gleaningPrompt = buildGleaningPrompt(chunkContent, previousResponse);
+        
+        return llmFunction.apply(GLEANING_USER_PROMPT, gleaningPrompt)
+            .thenCompose(gleaningResponse -> {
+                KGExtractionChunkResult gleaningResult = parseKGExtractionResponse(chunkId, gleaningResponse);
+                
+                // Check if gleaning found any new entities
+                int newEntitiesFound = countNewEntities(accumulatedResult.entities(), gleaningResult.entities());
+                int newRelationsFound = countNewRelations(accumulatedResult.relations(), gleaningResult.relations());
+                
+                logger.debug("Gleaning pass {} found {} new entities, {} new relations for chunk {}", 
+                    currentPass, newEntitiesFound, newRelationsFound, chunkId);
+                
+                // Early stop if no new entities/relations found
+                if (newEntitiesFound == 0 && newRelationsFound == 0) {
+                    logger.debug("Early stopping gleaning for chunk {} - no new entities/relations in pass {}", 
+                        chunkId, currentPass);
+                    return CompletableFuture.completedFuture(accumulatedResult);
+                }
+                
+                // Merge results
+                KGExtractionChunkResult mergedResult = mergeExtractionResults(accumulatedResult, gleaningResult);
+                
+                // Continue to next pass
+                return runGleaningPassRecursive(chunkId, chunkContent, gleaningResponse, mergedResult, currentPass + 1, maxPasses);
+            })
+            .exceptionally(e -> {
+                logger.warn("Gleaning pass {} failed for chunk {}: {}", currentPass, chunkId, e.getMessage());
+                // Return what we have so far on error
+                return accumulatedResult;
+            });
+    }
+    
+    /**
+     * Builds the gleaning prompt that asks the LLM to find missed entities.
+     * Includes the original chunk content and previous extraction for context.
+     */
+    private String buildGleaningPrompt(@NotNull String chunkContent, @NotNull String previousResponse) {
+        return String.format(GLEANING_SYSTEM_PROMPT_TEMPLATE, 
+            entityTypes, 
+            extractionLanguage, 
+            chunkContent, 
+            previousResponse);
+    }
+    
+    /**
+     * Counts new entities not present in the accumulated list.
+     */
+    private int countNewEntities(List<Entity> accumulated, List<Entity> newResults) {
+        java.util.Set<String> existingNames = accumulated.stream()
+            .map(e -> e.getEntityName().toLowerCase())
+            .collect(java.util.stream.Collectors.toSet());
+        
+        return (int) newResults.stream()
+            .filter(e -> !existingNames.contains(e.getEntityName().toLowerCase()))
+            .count();
+    }
+    
+    /**
+     * Counts new relations not present in the accumulated list.
+     */
+    private int countNewRelations(List<Relation> accumulated, List<Relation> newResults) {
+        java.util.Set<String> existingKeys = accumulated.stream()
+            .map(r -> r.getSrcId().toLowerCase() + "->" + r.getTgtId().toLowerCase())
+            .collect(java.util.stream.Collectors.toSet());
+        
+        return (int) newResults.stream()
+            .filter(r -> !existingKeys.contains(r.getSrcId().toLowerCase() + "->" + r.getTgtId().toLowerCase()))
+            .count();
+    }
+    
+    /**
+     * Merges gleaning results with accumulated results, deduplicating by entity name.
+     */
+    private KGExtractionChunkResult mergeExtractionResults(
+        @NotNull KGExtractionChunkResult accumulated, 
+        @NotNull KGExtractionChunkResult newResults
+    ) {
+        // Merge entities (deduplicate by name, keeping first occurrence)
+        Map<String, Entity> entityMap = new HashMap<>();
+        for (Entity e : accumulated.entities()) {
+            entityMap.putIfAbsent(e.getEntityName().toLowerCase(), e);
+        }
+        for (Entity e : newResults.entities()) {
+            entityMap.putIfAbsent(e.getEntityName().toLowerCase(), e);
+        }
+        
+        // Merge relations (deduplicate by src->tgt pair)
+        Map<String, Relation> relationMap = new HashMap<>();
+        for (Relation r : accumulated.relations()) {
+            String key = r.getSrcId().toLowerCase() + "->" + r.getTgtId().toLowerCase();
+            relationMap.putIfAbsent(key, r);
+        }
+        for (Relation r : newResults.relations()) {
+            String key = r.getSrcId().toLowerCase() + "->" + r.getTgtId().toLowerCase();
+            relationMap.putIfAbsent(key, r);
+        }
+        
+        return new KGExtractionChunkResult(
+            new ArrayList<>(entityMap.values()),
+            new ArrayList<>(relationMap.values())
+        );
+    }
+    
+    /**
+     * Gleaning system prompt template.
+     * Asks the LLM to find entities/relations missed in the initial extraction.
+     * Placeholders: entity_types, language, input_text, previous_extraction
+     */
+    private static final String GLEANING_SYSTEM_PROMPT_TEMPLATE = """
+        -Goal-
+        Given a text document that was previously analyzed for entity and relation extraction, \
+        many entities and relations were missed in the first analysis. \
+        Please identify and add any ADDITIONAL entities and relations that were missed.
+        
+        -Entity Types-
+        %s
+        
+        -Language-
+        Output must be in %s.
+        
+        -Original Text-
+        %s
+        
+        -Previous Extraction Results-
+        %s
+        
+        -Instructions-
+        1. Review the original text and the previous extraction results
+        2. Identify any entities and relations that were MISSED in the previous extraction
+        3. DO NOT repeat entities or relations that were already extracted
+        4. Use the same output format as the original extraction:
+           - entity{tuple_delimiter}entity_name{tuple_delimiter}entity_type{tuple_delimiter}entity_description
+           - relation{tuple_delimiter}src_id{tuple_delimiter}tgt_id{tuple_delimiter}relationship_keywords{tuple_delimiter}relationship_description
+        5. End with {completion_delimiter}
+        
+        Add the missed entities and relations below:
+        """;
+    
+    /**
+     * User prompt for gleaning passes.
+     */
+    private static final String GLEANING_USER_PROMPT = 
+        "MANY ENTITIES AND RELATIONS WERE MISSED IN THE PREVIOUS EXTRACTION. " +
+        "Please add them below using the same format. Only include NEW items not already extracted.";
     
     /**
      * Fills template placeholders in the entity extraction system prompt.
@@ -832,7 +1062,7 @@ public class LightRAG {
             }
             
             // parts[0] = "entity" (already validated by caller)
-            String entityName = parts[1].trim();
+            String entityName = normalizeEntityName(parts[1].trim());
             String entityType = parts[2].trim();
             String description = parts.length > 3 ? parts[3].trim() : "";
             
@@ -855,6 +1085,12 @@ public class LightRAG {
     /**
      * Parses a single relation line in tuple-delimiter format.
      * Format: relation{tuple_delimiter}src_id{tuple_delimiter}tgt_id{tuple_delimiter}relationship_keywords{tuple_delimiter}relationship_description
+     * 
+     * <p>Validates and filters:</p>
+     * <ul>
+     *   <li>Normalizes entity names (removes quotes, trims whitespace)</li>
+     *   <li>Rejects self-referential relations (source equals target)</li>
+     * </ul>
      */
     private Relation parseRelationLine(@NotNull String line, @NotNull String sourceChunkId) {
         try {
@@ -867,12 +1103,18 @@ public class LightRAG {
             }
             
             // parts[0] = "relation" (already validated by caller)
-            String srcId = parts[1].trim();
-            String tgtId = parts[2].trim();
+            String srcId = normalizeEntityName(parts[1].trim());
+            String tgtId = normalizeEntityName(parts[2].trim());
             String keywords = parts[3].trim();
             String description = parts.length > 4 ? parts[4].trim() : "";
             
             if (srcId.isEmpty() || tgtId.isEmpty()) {
+                return null;
+            }
+            
+            // Prevent self-referential relationships (T008)
+            if (srcId.equalsIgnoreCase(tgtId)) {
+                logger.debug("Filtered self-referential relation: {} -> {}", srcId, tgtId);
                 return null;
             }
             
@@ -918,6 +1160,57 @@ public class LightRAG {
         }
         
         return merged;
+    }
+    
+    /**
+     * Normalizes entity names for consistency.
+     * 
+     * <p>Normalization rules (per official LightRAG):</p>
+     * <ol>
+     *   <li>Remove surrounding quotes (single and double)</li>
+     *   <li>Trim leading/trailing whitespace</li>
+     *   <li>Collapse multiple internal spaces to single space</li>
+     *   <li>Truncate to configured maximum length (default 500)</li>
+     * </ol>
+     * 
+     * @param name the raw entity name from extraction
+     * @param maxLength maximum allowed length (truncated if exceeded)
+     * @return normalized entity name
+     */
+    private String normalizeEntityName(@NotNull String name, int maxLength) {
+        if (name == null || name.isEmpty()) {
+            return name;
+        }
+        
+        String normalized = name;
+        
+        // Remove surrounding quotes (both single and double)
+        if ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+            (normalized.startsWith("'") && normalized.endsWith("'"))) {
+            normalized = normalized.substring(1, normalized.length() - 1);
+        }
+        
+        // Trim leading/trailing whitespace
+        normalized = normalized.trim();
+        
+        // Collapse multiple internal spaces to single space
+        normalized = normalized.replaceAll("\\s+", " ");
+        
+        // Truncate if exceeds max length
+        if (normalized.length() > maxLength) {
+            normalized = normalized.substring(0, maxLength);
+            logger.debug("Entity name truncated to {} chars: {}...", maxLength, normalized.substring(0, Math.min(50, normalized.length())));
+        }
+        
+        return normalized;
+    }
+    
+    /**
+     * Default entity name normalization with configured max length.
+     */
+    private String normalizeEntityName(@NotNull String name) {
+        // Default max length of 500 (official LightRAG default)
+        return normalizeEntityName(name, 500);
     }
     
     /**

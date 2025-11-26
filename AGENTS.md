@@ -168,9 +168,117 @@ smallrye.faulttolerance.global.retry.max-duration=5s
 - **Cause**: Too many retries configured for latency-sensitive operations
 - **Fix**: Reduce `max-retries` to 2 and `max-duration` to 5s
 
+## LightRAG Extraction & Query Configuration
+
+The system implements LightRAG features aligned with the official HKUDS/LightRAG Python implementation.
+
+### Configuration
+Configure via `application.properties`:
+```properties
+# Gleaning (iterative extraction for missing entities)
+lightrag.extraction.gleaning.enabled=true
+lightrag.extraction.gleaning.max-loops=1
+
+# Entity name limits
+lightrag.extraction.entity.max-name-length=256
+
+# Description summarization
+lightrag.extraction.description.max-length=4096
+lightrag.extraction.description.summarize-when-exceeded=true
+
+# Query context token budgets
+lightrag.extraction.query.context.max-tokens=4000
+lightrag.extraction.query.context.entity-budget-ratio=0.4
+lightrag.extraction.query.context.relation-budget-ratio=0.3
+lightrag.extraction.query.context.chunk-budget-ratio=0.3
+
+# Keyword extraction for queries
+lightrag.extraction.query.keywords.high-level-count=5
+lightrag.extraction.query.keywords.low-level-count=5
+```
+
+### Configuration Presets
+
+**High Quality (more gleaning, detailed extraction)**
+```properties
+lightrag.extraction.gleaning.enabled=true
+lightrag.extraction.gleaning.max-loops=3
+lightrag.extraction.description.max-length=8192
+lightrag.extraction.query.context.max-tokens=8000
+```
+
+**Fast Processing (minimal gleaning, lower tokens)**
+```properties
+lightrag.extraction.gleaning.enabled=false
+lightrag.extraction.description.max-length=2048
+lightrag.extraction.query.context.max-tokens=2000
+```
+
+### Key Features
+
+**Gleaning**: Iterative extraction that re-prompts the LLM to find missed entities/relations
+- Enabled by default with 1 loop
+- Improves extraction completeness at the cost of additional LLM calls
+
+**Entity Normalization**: Automatic cleanup of entity names
+- Removes surrounding quotes (`"entity"` → `entity`)
+- Truncates names exceeding `max-name-length`
+- Normalizes whitespace
+
+**Self-Loop Prevention**: Rejects relationships where source equals target
+
+**Keyword Extraction**: Query analysis for smarter retrieval
+- High-level keywords: thematic concepts for global/relation search
+- Low-level keywords: specific entities for local/entity search
+
+**Context Merging**: Round-robin merge of entities, relations, and chunks
+- Respects per-type token budgets
+- Balances context diversity
+
+### Testing Commands
+```bash
+# Run gleaning extraction tests (9 tests)
+./mvnw test -Dtest=GleaningExtractionTest
+
+# Run query mode enhancement tests (18 tests)
+./mvnw test -Dtest=QueryModeEnhancementsTest
+
+# Run all LightRAG core tests
+./mvnw test -Dtest="*LightRAG*,Gleaning*,QueryMode*"
+```
+
+### Key Components
+- **LightRAGExtractionConfig** (`lightrag/core/LightRAGExtractionConfig.java`): Centralized configuration via `@ConfigMapping`
+- **KeywordExtractor/LLMKeywordExtractor** (`lightrag/query/`): Query keyword extraction
+- **ContextMerger** (`lightrag/query/ContextMerger.java`): Round-robin context merging with token budgets
+- **TokenUtil** (`lightrag/utils/TokenUtil.java`): Token estimation and budget allocation
+- **LocalQueryExecutor** (`lightrag/query/LocalQueryExecutor.java`): Entity-focused retrieval using low-level keywords
+- **GlobalQueryExecutor** (`lightrag/query/GlobalQueryExecutor.java`): Relation-focused retrieval using high-level keywords
+- **HybridQueryExecutor** (`lightrag/query/HybridQueryExecutor.java`): Combined retrieval with round-robin merging
+
+### Common Issues & Troubleshooting
+
+**Problem**: Extraction missing obvious entities
+- **Cause**: Gleaning disabled or max-loops too low
+- **Fix**: Enable gleaning (`gleaning.enabled=true`) and increase `max-loops` to 2-3
+
+**Problem**: Entity names contain quotes or are truncated
+- **Cause**: LLM output format issues
+- **Fix**: Names are automatically normalized; increase `max-name-length` if needed
+
+**Problem**: Query context too large/small
+- **Cause**: Token budget misconfigured
+- **Fix**: Adjust `max-tokens` and budget ratios (should sum to 1.0)
+
+**Problem**: Hybrid queries not balanced
+- **Cause**: One source type dominating context
+- **Fix**: Adjust budget ratios (e.g., `entity-budget-ratio=0.3, relation-budget-ratio=0.4`)
+
 ## Active Technologies
 - Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector (004-retry-backoff)
 - `AgeGraphStorage.java` for graph ops, `PgVectorStorage.java` for vector ops (004-retry-backoff)
+- PostgreSQL 14+ with Apache AGE and pgvector extensions (006-lightrag-official-impl)
 
 ## Recent Changes
+- 006-lightrag-official-impl: Added gleaning extraction, keyword extraction, context merging, token budgets, entity normalization
 - 004-retry-backoff: Added Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector
