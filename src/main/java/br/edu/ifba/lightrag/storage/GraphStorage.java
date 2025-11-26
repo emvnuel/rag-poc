@@ -197,6 +197,62 @@ public interface GraphStorage extends AutoCloseable {
      */
     CompletableFuture<List<Relation>> getAllRelations(@NotNull String projectId);
     
+    // ===== Batch Query Operations (spec-007) =====
+    
+    /**
+     * Gets entities that have the specified source chunks in their sourceIds.
+     * 
+     * Used for document deletion to identify affected entities.
+     *
+     * @param projectId the project UUID
+     * @param chunkIds the chunk IDs to search for
+     * @return a CompletableFuture<List<Entity>> - entities sourced from any of the chunks
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<List<Entity>> getEntitiesBySourceChunks(@NotNull String projectId, @NotNull List<String> chunkIds);
+    
+    /**
+     * Gets relations that have the specified source chunks in their sourceIds.
+     * 
+     * Used for document deletion to identify affected relations.
+     *
+     * @param projectId the project UUID
+     * @param chunkIds the chunk IDs to search for
+     * @return a CompletableFuture<List<Relation>> - relations sourced from any of the chunks
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<List<Relation>> getRelationsBySourceChunks(@NotNull String projectId, @NotNull List<String> chunkIds);
+    
+    /**
+     * Gets entities in batches for streaming export.
+     * 
+     * Supports pagination for memory-efficient export of large graphs.
+     *
+     * @param projectId the project UUID
+     * @param offset the number of entities to skip
+     * @param limit the maximum number of entities to return
+     * @return a CompletableFuture<List<Entity>> - batch of entities
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<List<Entity>> getEntitiesBatch(@NotNull String projectId, int offset, int limit);
+    
+    /**
+     * Gets relations in batches for streaming export.
+     * 
+     * Supports pagination for memory-efficient export of large graphs.
+     *
+     * @param projectId the project UUID
+     * @param offset the number of relations to skip
+     * @param limit the maximum number of relations to return
+     * @return a CompletableFuture<List<Relation>> - batch of relations
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<List<Relation>> getRelationsBatch(@NotNull String projectId, int offset, int limit);
+    
     // ===== Delete Operations =====
     
     /**
@@ -235,6 +291,49 @@ public interface GraphStorage extends AutoCloseable {
      * @throws IllegalStateException if graph doesn't exist for project
      */
     CompletableFuture<Integer> deleteBySourceId(@NotNull String projectId, @NotNull String sourceId);
+    
+    /**
+     * Batch deletes multiple entities by name.
+     * 
+     * Used for document deletion and entity merge cleanup.
+     *
+     * @param projectId the project UUID
+     * @param entityNames set of entity names to delete
+     * @return a CompletableFuture<Integer> - number of entities deleted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<Integer> deleteEntities(@NotNull String projectId, @NotNull java.util.Set<String> entityNames);
+    
+    /**
+     * Batch deletes multiple relations by their src-tgt keys.
+     * 
+     * Used for document deletion and entity merge cleanup.
+     *
+     * @param projectId the project UUID
+     * @param relationKeys set of relation keys in "source->target" format
+     * @return a CompletableFuture<Integer> - number of relations deleted
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<Integer> deleteRelations(@NotNull String projectId, @NotNull java.util.Set<String> relationKeys);
+    
+    // ===== Update Operations (spec-007) =====
+    
+    /**
+     * Updates an entity's description and source IDs.
+     * 
+     * Used during document deletion to rebuild entities with remaining sources.
+     *
+     * @param projectId the project UUID
+     * @param entityName the entity to update
+     * @param description the new description
+     * @param sourceIds the updated set of source chunk IDs
+     * @return a CompletableFuture that completes when the update is done
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since spec-007
+     */
+    CompletableFuture<Void> updateEntityDescription(@NotNull String projectId, @NotNull String entityName, @NotNull String description, @NotNull java.util.Set<String> sourceIds);
     
     // ===== Traversal Operations =====
     

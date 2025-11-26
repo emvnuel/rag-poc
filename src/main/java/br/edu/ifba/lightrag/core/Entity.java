@@ -191,6 +191,92 @@ public final class Entity {
         return new Entity(entityName, entityType, description, filePath, documentId, newList);
     }
     
+    /**
+     * Checks if this entity has a specific source chunk ID.
+     * 
+     * Used during document deletion to identify entities sourced from a chunk.
+     *
+     * @param chunkId the chunk ID to check
+     * @return true if this entity has the chunk in its source IDs
+     * @since spec-007
+     */
+    public boolean hasSourceChunk(@NotNull String chunkId) {
+        Objects.requireNonNull(chunkId, "chunkId must not be null");
+        return sourceChunkIds.contains(chunkId);
+    }
+    
+    /**
+     * Creates a new Entity with a source chunk ID removed.
+     * 
+     * Used during document deletion to remove a chunk's contribution.
+     *
+     * @param chunkId the chunk ID to remove
+     * @return new Entity instance with the chunk ID removed
+     * @since spec-007
+     */
+    public Entity removeSourceChunk(@NotNull String chunkId) {
+        Objects.requireNonNull(chunkId, "chunkId must not be null");
+        
+        if (!sourceChunkIds.contains(chunkId)) {
+            return this;
+        }
+        
+        List<String> newList = new ArrayList<>(sourceChunkIds);
+        newList.remove(chunkId);
+        
+        return new Entity(entityName, entityType, description, filePath, documentId, newList);
+    }
+    
+    /**
+     * Merges this entity with another entity using the specified strategy.
+     * 
+     * The resulting entity combines source chunk IDs from both entities
+     * and merges descriptions based on the strategy.
+     *
+     * @param other the entity to merge with
+     * @param strategy how to merge descriptions (CONCATENATE, KEEP_FIRST, KEEP_LONGEST)
+     * @param separator separator for CONCATENATE strategy
+     * @return new Entity instance with merged data
+     * @since spec-007
+     */
+    public Entity mergeWith(@NotNull Entity other, @NotNull String strategy, @NotNull String separator) {
+        Objects.requireNonNull(other, "other must not be null");
+        Objects.requireNonNull(strategy, "strategy must not be null");
+        Objects.requireNonNull(separator, "separator must not be null");
+        
+        // Merge descriptions based on strategy
+        String mergedDescription = switch (strategy.toUpperCase()) {
+            case "CONCATENATE" -> {
+                if (this.description.equals(other.description)) {
+                    yield this.description;
+                }
+                yield this.description + separator + other.description;
+            }
+            case "KEEP_FIRST" -> this.description;
+            case "KEEP_LONGEST" -> this.description.length() >= other.description.length() 
+                    ? this.description 
+                    : other.description;
+            default -> this.description + separator + other.description;
+        };
+        
+        // Merge source chunk IDs (deduplicated, respecting max)
+        List<String> mergedChunkIds = new ArrayList<>(this.sourceChunkIds);
+        for (String chunkId : other.sourceChunkIds) {
+            if (!mergedChunkIds.contains(chunkId)) {
+                mergedChunkIds.add(chunkId);
+            }
+        }
+        // Apply FIFO eviction if needed
+        while (mergedChunkIds.size() > MAX_SOURCE_CHUNK_IDS) {
+            mergedChunkIds.remove(0);
+        }
+        
+        // Use type from this entity if present, otherwise from other
+        String mergedType = this.entityType != null ? this.entityType : other.entityType;
+        
+        return new Entity(this.entityName, mergedType, mergedDescription, this.filePath, this.documentId, mergedChunkIds);
+    }
+    
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;

@@ -426,6 +426,178 @@ public class InMemoryGraphStorage implements GraphStorage {
         });
     }
     
+    // ===== Batch Query Operations (spec-007) =====
+    
+    @Override
+    public CompletableFuture<List<Entity>> getEntitiesBySourceChunks(@NotNull String projectId, @NotNull List<String> chunkIds) {
+        ensureInitialized();
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            Set<String> chunkIdSet = new HashSet<>(chunkIds);
+            List<Entity> matching = new ArrayList<>();
+            
+            for (Entity entity : entities.values()) {
+                for (String chunkId : entity.getSourceChunkIds()) {
+                    if (chunkIdSet.contains(chunkId)) {
+                        matching.add(entity);
+                        break;
+                    }
+                }
+            }
+            
+            logger.debug("Found {} entities by source chunks for project: {}", matching.size(), projectId);
+            return matching;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<List<Relation>> getRelationsBySourceChunks(@NotNull String projectId, @NotNull List<String> chunkIds) {
+        ensureInitialized();
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            Set<String> chunkIdSet = new HashSet<>(chunkIds);
+            List<Relation> matching = new ArrayList<>();
+            
+            for (ConcurrentHashMap<String, Relation> targets : outgoingEdges.values()) {
+                for (Relation relation : targets.values()) {
+                    for (String chunkId : relation.getSourceChunkIds()) {
+                        if (chunkIdSet.contains(chunkId)) {
+                            matching.add(relation);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            logger.debug("Found {} relations by source chunks for project: {}", matching.size(), projectId);
+            return matching;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<List<Entity>> getEntitiesBatch(@NotNull String projectId, int offset, int limit) {
+        ensureInitialized();
+        return CompletableFuture.supplyAsync(() -> {
+            List<Entity> allEntities = new ArrayList<>(entities.values());
+            
+            if (offset >= allEntities.size()) {
+                return List.of();
+            }
+            
+            int endIndex = Math.min(offset + limit, allEntities.size());
+            return allEntities.subList(offset, endIndex);
+        });
+    }
+    
+    @Override
+    public CompletableFuture<List<Relation>> getRelationsBatch(@NotNull String projectId, int offset, int limit) {
+        ensureInitialized();
+        return CompletableFuture.supplyAsync(() -> {
+            List<Relation> allRelations = new ArrayList<>();
+            for (ConcurrentHashMap<String, Relation> targets : outgoingEdges.values()) {
+                allRelations.addAll(targets.values());
+            }
+            
+            if (offset >= allRelations.size()) {
+                return List.of();
+            }
+            
+            int endIndex = Math.min(offset + limit, allRelations.size());
+            return allRelations.subList(offset, endIndex);
+        });
+    }
+    
+    @Override
+    public CompletableFuture<Integer> deleteEntities(@NotNull String projectId, @NotNull Set<String> entityNames) {
+        ensureInitialized();
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            int deletedCount = 0;
+            
+            for (String entityName : entityNames) {
+                if (entities.remove(entityName) != null) {
+                    deletedCount++;
+                    
+                    // Remove all relations involving this entity
+                    outgoingEdges.remove(entityName);
+                    incomingEdges.remove(entityName);
+                    
+                    // Remove from other entities' adjacency lists
+                    for (ConcurrentHashMap<String, Relation> targets : outgoingEdges.values()) {
+                        targets.remove(entityName);
+                    }
+                    for (ConcurrentHashMap<String, Relation> sources : incomingEdges.values()) {
+                        sources.remove(entityName);
+                    }
+                }
+            }
+            
+            logger.debug("Deleted {} entities for project: {}", deletedCount, projectId);
+            return deletedCount;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<Integer> deleteRelations(@NotNull String projectId, @NotNull Set<String> relationKeys) {
+        ensureInitialized();
+        if (relationKeys == null || relationKeys.isEmpty()) {
+            return CompletableFuture.completedFuture(0);
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            int deletedCount = 0;
+            
+            for (String relationKey : relationKeys) {
+                // Parse relation key in format "source->target"
+                String[] parts = relationKey.split("->");
+                if (parts.length != 2) {
+                    logger.warn("Invalid relation key format: {}", relationKey);
+                    continue;
+                }
+                
+                String srcId = parts[0].trim();
+                String tgtId = parts[1].trim();
+                
+                ConcurrentHashMap<String, Relation> targets = outgoingEdges.get(srcId);
+                if (targets != null && targets.remove(tgtId) != null) {
+                    deletedCount++;
+                }
+                
+                ConcurrentHashMap<String, Relation> sources = incomingEdges.get(tgtId);
+                if (sources != null) {
+                    sources.remove(srcId);
+                }
+            }
+            
+            logger.debug("Deleted {} relations for project: {}", deletedCount, projectId);
+            return deletedCount;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<Void> updateEntityDescription(@NotNull String projectId, @NotNull String entityName, 
+            @NotNull String description, @NotNull Set<String> sourceIds) {
+        ensureInitialized();
+        return CompletableFuture.runAsync(() -> {
+            Entity entity = entities.get(entityName);
+            if (entity != null) {
+                Entity updated = entity.withDescription(description)
+                    .withSourceChunkIds(new ArrayList<>(sourceIds));
+                entities.put(entityName, updated);
+                logger.debug("Updated entity description for '{}' in project: {}", entityName, projectId);
+            }
+        });
+    }
+    
     @Override
     public void close() throws Exception {
         if (initialized) {
