@@ -3,15 +3,20 @@ package br.edu.ifba.lightrag.storage.impl;
 import br.edu.ifba.lightrag.core.Entity;
 import br.edu.ifba.lightrag.core.Relation;
 import br.edu.ifba.lightrag.storage.GraphStorage;
+import br.edu.ifba.lightrag.utils.TransientSQLExceptionPredicate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.smallrye.faulttolerance.api.ExponentialBackoff;
+import io.smallrye.faulttolerance.api.RetryWhen;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.faulttolerance.Retry;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.*;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -63,6 +68,9 @@ public class AgeGraphStorage implements GraphStorage {
     // ===== Graph Lifecycle Methods =====
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> createProjectGraph(@NotNull String projectId) {
         return CompletableFuture.runAsync(() -> {
             validateProjectId(projectId);
@@ -103,6 +111,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> deleteProjectGraph(@NotNull String projectId) {
         return CompletableFuture.runAsync(() -> {
             validateProjectId(projectId);
@@ -138,6 +149,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Boolean> graphExists(@NotNull String projectId) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
@@ -300,6 +314,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> upsertEntity(@NotNull String projectId, @NotNull Entity entity) {
         return CompletableFuture.runAsync(() -> {
             validateProjectId(projectId);
@@ -337,6 +354,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> upsertEntities(@NotNull String projectId, @NotNull List<Entity> entities) {
         if (entities.isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -382,6 +402,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> upsertRelation(@NotNull String projectId, @NotNull Relation relation) {
         return CompletableFuture.runAsync(() -> {
             validateProjectId(projectId);
@@ -429,6 +452,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> upsertRelations(@NotNull String projectId, @NotNull List<Relation> relations) {
         if (relations.isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -483,6 +509,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Entity> getEntity(@NotNull String projectId, @NotNull String entityName) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
@@ -502,6 +531,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<List<Entity>> getEntities(@NotNull String projectId, @NotNull List<String> entityNames) {
         if (entityNames.isEmpty()) {
             return CompletableFuture.completedFuture(List.of());
@@ -529,6 +561,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Relation> getRelation(@NotNull String projectId, @NotNull String srcId, @NotNull String tgtId) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
@@ -551,6 +586,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<List<Relation>> getRelationsForEntity(@NotNull String projectId, @NotNull String entityName) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
@@ -571,6 +609,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<List<Entity>> getAllEntities(@NotNull String projectId) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
@@ -585,6 +626,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<List<Relation>> getAllRelations(@NotNull String projectId) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
@@ -797,6 +841,9 @@ public class AgeGraphStorage implements GraphStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<GraphStats> getStats(@NotNull String projectId) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);

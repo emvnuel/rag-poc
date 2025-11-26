@@ -96,3 +96,81 @@ lightrag.deduplication.log.merges=true
 1. **String similarity** (50% weight): Levenshtein distance + token overlap
 2. **Type matching** (30% weight): PERSON, ORGANIZATION, LOCATION, etc.
 3. **Description overlap** (20% weight): TF-IDF weighted token matching
+
+## Retry Logic with Exponential Backoff
+
+The system includes automatic retry logic for transient database failures using SmallRye Fault Tolerance.
+
+### Configuration
+Configure via `application.properties`:
+```properties
+# SmallRye Fault Tolerance - Retry Configuration
+smallrye.faulttolerance.global.retry.max-retries=3
+smallrye.faulttolerance.global.retry.delay=200
+smallrye.faulttolerance.global.retry.max-duration=30s
+smallrye.faulttolerance.global.retry.jitter=100
+smallrye.faulttolerance.global.retry.enabled=true
+```
+
+### Configuration Presets
+
+**High Availability (more retries, longer delays)**
+```properties
+smallrye.faulttolerance.global.retry.max-retries=5
+smallrye.faulttolerance.global.retry.delay=1000
+smallrye.faulttolerance.global.retry.max-duration=60s
+```
+
+**Low Latency (fewer retries, faster failure)**
+```properties
+smallrye.faulttolerance.global.retry.max-retries=2
+smallrye.faulttolerance.global.retry.delay=200
+smallrye.faulttolerance.global.retry.max-duration=5s
+```
+
+### Transient vs Permanent Errors
+
+**Transient Errors (will retry)**: SQLSTATE 08xxx (connection), 40xxx (deadlock), 53xxx (resources), 57xxx (operator)
+
+**Permanent Errors (will NOT retry)**: SQLSTATE 23xxx (constraint), 42xxx (syntax/access)
+
+### Testing Commands
+```bash
+# Run retry unit tests
+./mvnw test -Dtest=TransientSQLExceptionPredicateTest
+./mvnw test -Dtest=RetryEventLoggerTest
+
+# Run retry integration tests
+./mvnw verify -DskipITs=false -Dit.test=AgeGraphStorageRetryIT
+./mvnw verify -DskipITs=false -Dit.test=PgVectorStorageRetryIT
+
+# Run all retry-related tests
+./mvnw test -Dtest="*Retry*,*Transient*"
+```
+
+### Key Components
+- **TransientSQLExceptionPredicate** (`lightrag/utils/TransientSQLExceptionPredicate.java`): Classifies SQL exceptions as transient or permanent
+- **RetryEventLogger** (`lightrag/utils/RetryEventLogger.java`): Structured logging for retry events with MDC context
+- **AgeGraphStorage** (`lightrag/storage/impl/AgeGraphStorage.java`): Graph operations with `@Retry` annotations
+- **PgVectorStorage** (`lightrag/storage/impl/PgVectorStorage.java`): Vector operations with `@Retry` annotations
+
+### Common Issues & Troubleshooting
+
+**Problem**: "Retry exhausted" in logs
+- **Cause**: Database completely unavailable or network partition longer than retry window
+- **Fix**: Check database status, increase `max-retries` or `max-duration`
+
+**Problem**: Operations failing without retries
+- **Cause**: Permanent error (constraint violation), or retry disabled
+- **Fix**: Check SQLSTATE in logs, verify `retry.enabled=true`
+
+**Problem**: Retries causing too much delay
+- **Cause**: Too many retries configured for latency-sensitive operations
+- **Fix**: Reduce `max-retries` to 2 and `max-duration` to 5s
+
+## Active Technologies
+- Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector (004-retry-backoff)
+- `AgeGraphStorage.java` for graph ops, `PgVectorStorage.java` for vector ops (004-retry-backoff)
+
+## Recent Changes
+- 004-retry-backoff: Added Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector

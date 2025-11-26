@@ -73,6 +73,12 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-smallrye-openapi</artifactId>
         </dependency>
+        
+        <!-- Fault Tolerance (Retry, Circuit Breaker) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-fault-tolerance</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
