@@ -1,15 +1,20 @@
 package br.edu.ifba.lightrag.storage.impl;
 
 import br.edu.ifba.lightrag.storage.VectorStorage;
+import br.edu.ifba.lightrag.utils.TransientSQLExceptionPredicate;
+import io.smallrye.faulttolerance.api.ExponentialBackoff;
+import io.smallrye.faulttolerance.api.RetryWhen;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.eclipse.microprofile.faulttolerance.Retry;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.*;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -156,6 +161,9 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> upsert(
         @NotNull String id, 
         @NotNull Object vector, 
@@ -215,6 +223,9 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Void> upsertBatch(@NotNull List<VectorEntry> entries) {
         if (entries.isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -283,6 +294,9 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<List<VectorSearchResult>> query(
         @NotNull Object queryVector, 
         int topK, 
@@ -360,13 +374,16 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Boolean> delete(@NotNull String id) {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 String sql = String.format("DELETE FROM rag.%s WHERE id = ?", tableName);
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                    pstmt.setString(1, id);
+                    pstmt.setObject(1, UUID.fromString(id));
                     int deleted = pstmt.executeUpdate();
                     return deleted > 0;
                 }
@@ -379,6 +396,9 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Integer> deleteBatch(@NotNull List<String> ids) {
         if (ids.isEmpty()) {
             return CompletableFuture.completedFuture(0);
@@ -392,7 +412,7 @@ public class PgVectorStorage implements VectorStorage {
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                     for (String id : ids) {
-                        pstmt.setString(1, id);
+                        pstmt.setObject(1, UUID.fromString(id));
                         pstmt.addBatch();
                     }
                     
@@ -415,6 +435,9 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<VectorEntry> get(@NotNull String id) {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
@@ -424,7 +447,7 @@ public class PgVectorStorage implements VectorStorage {
                 );
                 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                    pstmt.setString(1, id);
+                    pstmt.setObject(1, UUID.fromString(id));
                     
                     ResultSet rs = pstmt.executeQuery();
                     
@@ -470,6 +493,9 @@ public class PgVectorStorage implements VectorStorage {
     }
     
     @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Long> size() {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection();
@@ -505,6 +531,9 @@ public class PgVectorStorage implements VectorStorage {
      * @param documentId The document UUID
      * @return CompletableFuture<Boolean> true if vectors exist, false otherwise
      */
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
     public CompletableFuture<Boolean> hasVectors(String documentId) {
         return CompletableFuture.supplyAsync(() -> {
             try (Connection conn = dataSource.getConnection()) {
