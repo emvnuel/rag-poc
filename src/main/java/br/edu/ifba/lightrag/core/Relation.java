@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -11,6 +14,12 @@ import java.util.Objects;
  * Relations are directed edges that connect entities with semantic meaning.
  */
 public final class Relation {
+    
+    /**
+     * Maximum number of source chunk IDs to store per relation.
+     * Uses FIFO eviction when exceeded.
+     */
+    public static final int MAX_SOURCE_CHUNK_IDS = 50;
     
     @JsonProperty("src_id")
     @NotNull
@@ -39,6 +48,10 @@ public final class Relation {
     @Nullable
     private final String documentId;
     
+    @JsonProperty("source_chunk_ids")
+    @NotNull
+    private final List<String> sourceChunkIds;
+    
     /**
      * Constructs a new Relation (backward compatible constructor).
      *
@@ -56,11 +69,11 @@ public final class Relation {
             @NotNull String keywords,
             double weight,
             @Nullable String filePath) {
-        this(srcId, tgtId, description, keywords, weight, filePath, null);
+        this(srcId, tgtId, description, keywords, weight, filePath, null, Collections.emptyList());
     }
     
     /**
-     * Constructs a new Relation.
+     * Constructs a new Relation (backward compatible constructor with documentId).
      *
      * @param srcId the source entity ID (required)
      * @param tgtId the target entity ID (required)
@@ -78,6 +91,30 @@ public final class Relation {
             double weight,
             @Nullable String filePath,
             @Nullable String documentId) {
+        this(srcId, tgtId, description, keywords, weight, filePath, documentId, Collections.emptyList());
+    }
+    
+    /**
+     * Constructs a new Relation with all fields.
+     *
+     * @param srcId the source entity ID (required)
+     * @param tgtId the target entity ID (required)
+     * @param description detailed description of the relationship (required)
+     * @param keywords keywords describing the relationship (required)
+     * @param weight the strength/importance of the relationship (default: 1.0)
+     * @param filePath the file path of the source document (optional)
+     * @param documentId the document UUID that this relation was extracted from (optional)
+     * @param sourceChunkIds UUIDs of chunks that contributed to this relation (optional)
+     */
+    public Relation(
+            @NotNull String srcId,
+            @NotNull String tgtId,
+            @NotNull String description,
+            @NotNull String keywords,
+            double weight,
+            @Nullable String filePath,
+            @Nullable String documentId,
+            @Nullable List<String> sourceChunkIds) {
         this.srcId = Objects.requireNonNull(srcId, "srcId must not be null");
         this.tgtId = Objects.requireNonNull(tgtId, "tgtId must not be null");
         this.description = Objects.requireNonNull(description, "description must not be null");
@@ -85,6 +122,9 @@ public final class Relation {
         this.weight = weight;
         this.filePath = filePath;
         this.documentId = documentId;
+        this.sourceChunkIds = sourceChunkIds != null 
+            ? Collections.unmodifiableList(new ArrayList<>(sourceChunkIds)) 
+            : Collections.emptyList();
     }
     
     @NotNull
@@ -122,17 +162,63 @@ public final class Relation {
     }
     
     /**
+     * Gets the list of source chunk IDs that contributed to this relation.
+     *
+     * @return unmodifiable list of chunk UUIDs
+     */
+    @NotNull
+    public List<String> getSourceChunkIds() {
+        return sourceChunkIds;
+    }
+    
+    /**
      * Creates a new Relation with updated description.
      */
     public Relation withDescription(@NotNull String newDescription) {
-        return new Relation(srcId, tgtId, newDescription, keywords, weight, filePath, documentId);
+        return new Relation(srcId, tgtId, newDescription, keywords, weight, filePath, documentId, sourceChunkIds);
     }
     
     /**
      * Creates a new Relation with updated weight.
      */
     public Relation withWeight(double newWeight) {
-        return new Relation(srcId, tgtId, description, keywords, newWeight, filePath, documentId);
+        return new Relation(srcId, tgtId, description, keywords, newWeight, filePath, documentId, sourceChunkIds);
+    }
+    
+    /**
+     * Creates a new Relation with updated source chunk IDs.
+     *
+     * @param newSourceChunkIds the new list of source chunk IDs
+     * @return new Relation instance with updated sourceChunkIds
+     */
+    public Relation withSourceChunkIds(@NotNull List<String> newSourceChunkIds) {
+        return new Relation(srcId, tgtId, description, keywords, weight, filePath, documentId, newSourceChunkIds);
+    }
+    
+    /**
+     * Creates a new Relation with an additional source chunk ID.
+     * Uses FIFO eviction if the list exceeds MAX_SOURCE_CHUNK_IDS.
+     *
+     * @param chunkId the chunk ID to add
+     * @return new Relation instance with the chunk ID added
+     */
+    public Relation addSourceChunkId(@NotNull String chunkId) {
+        Objects.requireNonNull(chunkId, "chunkId must not be null");
+        
+        // Skip if already present
+        if (sourceChunkIds.contains(chunkId)) {
+            return this;
+        }
+        
+        List<String> newList = new ArrayList<>(sourceChunkIds);
+        newList.add(chunkId);
+        
+        // FIFO eviction if exceeds max
+        while (newList.size() > MAX_SOURCE_CHUNK_IDS) {
+            newList.remove(0);
+        }
+        
+        return new Relation(srcId, tgtId, description, keywords, weight, filePath, documentId, newList);
     }
     
     /**
@@ -158,12 +244,13 @@ public final class Relation {
                Objects.equals(description, relation.description) &&
                Objects.equals(keywords, relation.keywords) &&
                Objects.equals(filePath, relation.filePath) &&
-               Objects.equals(documentId, relation.documentId);
+               Objects.equals(documentId, relation.documentId) &&
+               Objects.equals(sourceChunkIds, relation.sourceChunkIds);
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(srcId, tgtId, description, keywords, weight, filePath, documentId);
+        return Objects.hash(srcId, tgtId, description, keywords, weight, filePath, documentId, sourceChunkIds);
     }
     
     @Override
@@ -176,6 +263,7 @@ public final class Relation {
                 ", weight=" + weight +
                 ", filePath='" + filePath + '\'' +
                 ", documentId='" + documentId + '\'' +
+                ", sourceChunkIds=" + sourceChunkIds +
                 '}';
     }
     
@@ -190,6 +278,7 @@ public final class Relation {
         private double weight = 1.0;
         private String filePath;
         private String documentId;
+        private List<String> sourceChunkIds = new ArrayList<>();
         
         public Builder srcId(@NotNull String srcId) {
             this.srcId = srcId;
@@ -226,8 +315,33 @@ public final class Relation {
             return this;
         }
         
+        /**
+         * Sets the source chunk IDs.
+         *
+         * @param sourceChunkIds the list of chunk IDs (nullable, will be treated as empty list)
+         * @return this builder
+         */
+        public Builder sourceChunkIds(@Nullable List<String> sourceChunkIds) {
+            this.sourceChunkIds = sourceChunkIds != null ? new ArrayList<>(sourceChunkIds) : new ArrayList<>();
+            return this;
+        }
+        
+        /**
+         * Adds a single source chunk ID.
+         *
+         * @param chunkId the chunk ID to add
+         * @return this builder
+         */
+        public Builder addSourceChunkId(@NotNull String chunkId) {
+            Objects.requireNonNull(chunkId, "chunkId must not be null");
+            if (!sourceChunkIds.contains(chunkId)) {
+                sourceChunkIds.add(chunkId);
+            }
+            return this;
+        }
+        
         public Relation build() {
-            return new Relation(srcId, tgtId, description, keywords, weight, filePath, documentId);
+            return new Relation(srcId, tgtId, description, keywords, weight, filePath, documentId, sourceChunkIds);
         }
     }
     
