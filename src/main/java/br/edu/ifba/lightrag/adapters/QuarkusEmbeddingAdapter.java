@@ -37,7 +37,7 @@ public class QuarkusEmbeddingAdapter implements EmbeddingFunction {
     @ConfigProperty(name = "embedding.model")
     String embeddingModel;
 
-    @ConfigProperty(name = "lightrag.vector.dimension", defaultValue = "384")
+    @ConfigProperty(name = "lightrag.vector.dimension", defaultValue = "768")
     Integer vectorDimension;
 
     @Override

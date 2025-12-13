@@ -27,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
  *   <li>Keyword extraction: Uses both high-level (for GLOBAL) and low-level (for LOCAL) keywords</li>
  *   <li>Round-robin merging: Interleaves results from LOCAL and GLOBAL for diversity</li>
  *   <li>Token budget: Enforces max context tokens from configuration</li>
+ *   <li>Chunk selection strategy: Supports VECTOR (default) or WEIGHTED selection for LOCAL</li>
  * </ul>
  */
 public class HybridQueryExecutor extends QueryExecutor {
@@ -56,7 +57,7 @@ public class HybridQueryExecutor extends QueryExecutor {
     ) {
         this(llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage,
              entityVectorStorage, graphStorage, localSystemPrompt, globalSystemPrompt, 
-             systemPrompt, null, null);
+             systemPrompt, null, null, null);
     }
     
     /**
@@ -87,12 +88,47 @@ public class HybridQueryExecutor extends QueryExecutor {
         @Nullable KeywordExtractor keywordExtractor,
         @Nullable LightRAGExtractionConfig config
     ) {
+        this(llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage,
+             entityVectorStorage, graphStorage, localSystemPrompt, globalSystemPrompt,
+             systemPrompt, keywordExtractor, config, null);
+    }
+    
+    /**
+     * Creates a HybridQueryExecutor with optional keyword extraction, config, and chunk selector.
+     * 
+     * @param llmFunction LLM function for generating responses
+     * @param embeddingFunction Embedding function for vector search
+     * @param chunkStorage KV storage for chunks
+     * @param chunkVectorStorage Vector storage for chunk embeddings
+     * @param entityVectorStorage Vector storage for entity embeddings
+     * @param graphStorage Graph storage for relationships
+     * @param localSystemPrompt System prompt for LOCAL queries
+     * @param globalSystemPrompt System prompt for GLOBAL queries
+     * @param systemPrompt System prompt for final HYBRID response
+     * @param keywordExtractor Optional keyword extractor (null to disable)
+     * @param config Optional configuration for token budgets (null for defaults)
+     * @param chunkSelector Optional chunk selector for LOCAL queries (null for direct vector)
+     */
+    public HybridQueryExecutor(
+        @NotNull LLMFunction llmFunction,
+        @NotNull EmbeddingFunction embeddingFunction,
+        @NotNull KVStorage chunkStorage,
+        @NotNull VectorStorage chunkVectorStorage,
+        @NotNull VectorStorage entityVectorStorage,
+        @NotNull GraphStorage graphStorage,
+        @NotNull String localSystemPrompt,
+        @NotNull String globalSystemPrompt,
+        @NotNull String systemPrompt,
+        @Nullable KeywordExtractor keywordExtractor,
+        @Nullable LightRAGExtractionConfig config,
+        @Nullable ChunkSelector chunkSelector
+    ) {
         super(llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage, entityVectorStorage, graphStorage);
         
-        // Create child executors with keyword extractor support
+        // Create child executors with keyword extractor and chunk selector support
         this.localExecutor = new LocalQueryExecutor(
             llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage, 
-            entityVectorStorage, graphStorage, localSystemPrompt, keywordExtractor
+            entityVectorStorage, graphStorage, localSystemPrompt, keywordExtractor, chunkSelector
         );
         this.globalExecutor = new GlobalQueryExecutor(
             llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage, 
@@ -108,7 +144,8 @@ public class HybridQueryExecutor extends QueryExecutor {
         @NotNull String query,
         @NotNull QueryParam param
     ) {
-        logger.info("Executing HYBRID query");
+        logger.info("Executing HYBRID query with chunk selection strategy: {}", 
+            param.getChunkSelectionStrategy());
         
         // Execute both local and global retrieval in parallel
         // Use context-only mode to get raw results for merging

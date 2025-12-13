@@ -5,7 +5,7 @@ import br.edu.ifba.chat.LlmChatClient;
 import br.edu.ifba.chat.LlmChatRequest;
 import br.edu.ifba.chat.LlmChatResponse;
 import br.edu.ifba.document.Document;
-import br.edu.ifba.document.DocumentService;
+import br.edu.ifba.document.DocumentServicePort;
 import br.edu.ifba.document.DocumentType;
 import br.edu.ifba.document.EmbeddingRequest;
 import br.edu.ifba.document.EmbeddingResponse;
@@ -17,7 +17,7 @@ import br.edu.ifba.lightrag.storage.impl.AgeGraphStorage;
 import br.edu.ifba.lightrag.storage.impl.PgVectorStorage;
 import br.edu.ifba.project.Project;
 import br.edu.ifba.project.ProjectRepository;
-import br.edu.ifba.project.ProjectService;
+import br.edu.ifba.project.ProjectServicePort;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -58,13 +58,13 @@ class ProjectIsolationIT {
     PgVectorStorage vectorStorage;
 
     @Inject
-    ProjectService projectService;
+    ProjectServicePort projectService;
 
     @Inject
     ProjectRepository projectRepository;
 
     @Inject
-    DocumentService documentService;
+    DocumentServicePort documentService;
 
     @Inject
     jakarta.persistence.EntityManager entityManager;

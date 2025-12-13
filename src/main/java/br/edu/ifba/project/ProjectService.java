@@ -7,24 +7,31 @@ import java.util.concurrent.CompletionException;
 import org.jboss.logging.Logger;
 
 import br.edu.ifba.lightrag.storage.GraphStorage;
-import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 
-@ApplicationScoped
+/**
+ * PostgreSQL/Hibernate implementation of project operations.
+ * Uses JTA transactions for atomic operations.
+ * 
+ * @deprecated Use ProjectServiceProvider instead which handles runtime backend selection.
+ *             This class is kept for backwards compatibility but is no longer a CDI bean.
+ */
+// Removed: @ApplicationScoped
+// Removed: @IfBuildProperty - now handled by ProjectServiceProvider
 public class ProjectService {
 
     private static final Logger LOG = Logger.getLogger(ProjectService.class);
 
     @Inject
-    ProjectRepository projectRepository;
+    ProjectRepositoryPort projectRepository;
 
     @Inject
     GraphStorage graphStorage;
 
     @Transactional
     public Project create(final Project project) {
-        projectRepository.persist(project);
+        projectRepository.save(project);
         
         // Create isolated graph for the project
         final String projectId = project.getId().toString();
@@ -44,7 +51,7 @@ public class ProjectService {
     }
 
     public List<Project> findAll() {
-        return projectRepository.listAll();
+        return projectRepository.findAllProjects();
     }
 
     @Transactional
@@ -69,7 +76,7 @@ public class ProjectService {
         }
         
         // Delete the project (this will cascade to documents and vectors via FK)
-        projectRepository.delete(project);
+        projectRepository.deleteProject(project);
         projectRepository.flush();
         LOG.infof("Deleted project: %s", projectId);
     }

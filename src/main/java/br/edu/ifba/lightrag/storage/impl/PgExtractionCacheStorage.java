@@ -5,6 +5,7 @@ import br.edu.ifba.lightrag.core.ExtractionCache;
 import br.edu.ifba.lightrag.storage.ExtractionCacheStorage;
 import br.edu.ifba.lightrag.utils.TransientSQLExceptionPredicate;
 import br.edu.ifba.shared.UuidUtils;
+import io.quarkus.arc.properties.IfBuildProperty;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.faulttolerance.Retry;
@@ -32,6 +33,7 @@ import java.util.concurrent.CompletableFuture;
  * Uses the rag.extraction_cache table for persistent storage.
  */
 @ApplicationScoped
+@IfBuildProperty(name = "lightrag.storage.backend", stringValue = "postgresql", enableIfMissing = true)
 public class PgExtractionCacheStorage implements ExtractionCacheStorage {
     
     private static final Logger logger = LoggerFactory.getLogger(PgExtractionCacheStorage.class);

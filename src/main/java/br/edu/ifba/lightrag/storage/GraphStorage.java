@@ -352,6 +352,31 @@ public interface GraphStorage extends AutoCloseable {
     CompletableFuture<GraphSubgraph> traverse(@NotNull String projectId, @NotNull String startEntity, int maxDepth);
     
     /**
+     * Performs a BFS (Breadth-First Search) graph traversal with node limits.
+     * 
+     * This method provides better control over graph exploration for large graphs:
+     * - Level-by-level traversal ensures breadth-first ordering
+     * - maxNodes parameter prevents memory exhaustion on large graphs
+     * - Batch neighbor queries improve performance over single-node queries
+     * 
+     * Based on the official LightRAG Python implementation's _bfs_subgraph method.
+     *
+     * @param projectId the project UUID (routes to project's graph)
+     * @param startEntity the entity to start from
+     * @param maxDepth the maximum depth to traverse (0 = start node only)
+     * @param maxNodes the maximum number of nodes to return (0 = unlimited)
+     * @return a CompletableFuture<GraphSubgraph> - subgraph containing entities and relations
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @throws IllegalStateException if graph doesn't exist for project
+     * @since implementation-comparison
+     */
+    CompletableFuture<GraphSubgraph> traverseBFS(
+            @NotNull String projectId, 
+            @NotNull String startEntity, 
+            int maxDepth, 
+            int maxNodes);
+    
+    /**
      * Finds the shortest path between two entities within the project's graph.
      *
      * @param projectId the project UUID (routes to project's graph)
@@ -362,6 +387,44 @@ public interface GraphStorage extends AutoCloseable {
      * @throws IllegalStateException if graph doesn't exist for project
      */
     CompletableFuture<List<Entity>> findShortestPath(@NotNull String projectId, @NotNull String sourceEntity, @NotNull String targetEntity);
+    
+    // ===== Batch Operations for Performance =====
+    
+    /**
+     * Gets the degree (number of connections) for multiple entities in a single batch.
+     * 
+     * This is more efficient than calling getRelationsForEntity() for each entity
+     * when you only need the count, not the actual relations.
+     *
+     * @param projectId the project UUID
+     * @param entityNames list of entity names to get degrees for
+     * @param batchSize number of entities to process per database query (recommended: 500)
+     * @return a CompletableFuture<Map<String, Integer>> mapping entity names to their degrees
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since implementation-comparison
+     */
+    CompletableFuture<java.util.Map<String, Integer>> getNodeDegreesBatch(
+            @NotNull String projectId, 
+            @NotNull List<String> entityNames, 
+            int batchSize);
+    
+    /**
+     * Gets multiple entities by name with efficient batching.
+     * 
+     * This method processes entities in batches to avoid SQL query size limits
+     * and improve performance for large entity lists.
+     *
+     * @param projectId the project UUID
+     * @param entityNames list of entity names to retrieve
+     * @param batchSize number of entities to process per database query (recommended: 1000)
+     * @return a CompletableFuture<Map<String, Entity>> mapping entity names to entities
+     * @throws IllegalArgumentException if projectId is null or invalid UUID format
+     * @since implementation-comparison
+     */
+    CompletableFuture<java.util.Map<String, Entity>> getEntitiesMapBatch(
+            @NotNull String projectId, 
+            @NotNull List<String> entityNames, 
+            int batchSize);
     
     // ===== Statistics Operations =====
     

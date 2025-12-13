@@ -83,6 +83,53 @@ public final class QueryParam {
     @NotNull
     private final String projectId;
     
+    @NotNull
+    private final ChunkSelectionStrategy chunkSelectionStrategy;
+    
+    /**
+     * Strategy for selecting relevant chunks during query execution.
+     */
+    public enum ChunkSelectionStrategy {
+        /**
+         * Use vector similarity search only.
+         */
+        VECTOR("vector"),
+        
+        /**
+         * Use weighted polling based on entity/relation connections.
+         * Boosts chunks connected to relevant entities.
+         */
+        WEIGHTED("weighted");
+        
+        private final String value;
+        
+        ChunkSelectionStrategy(String value) {
+            this.value = value;
+        }
+        
+        public String getValue() {
+            return value;
+        }
+        
+        /**
+         * Parses strategy from string value.
+         * 
+         * @param value The string value (case-insensitive)
+         * @return Matching strategy, or VECTOR as default
+         */
+        public static ChunkSelectionStrategy fromString(String value) {
+            if (value == null || value.isBlank()) {
+                return VECTOR;
+            }
+            for (ChunkSelectionStrategy s : values()) {
+                if (s.value.equalsIgnoreCase(value.trim())) {
+                    return s;
+                }
+            }
+            return VECTOR;
+        }
+    }
+    
     private QueryParam(Builder builder) {
         this.mode = builder.mode;
         this.onlyNeedContext = builder.onlyNeedContext;
@@ -99,6 +146,7 @@ public final class QueryParam {
         this.userPrompt = builder.userPrompt;
         this.enableRerank = builder.enableRerank;
         this.projectId = builder.projectId;
+        this.chunkSelectionStrategy = builder.chunkSelectionStrategy;
     }
     
     @NotNull
@@ -168,6 +216,16 @@ public final class QueryParam {
     }
     
     /**
+     * Gets the chunk selection strategy.
+     * 
+     * @return The chunk selection strategy
+     */
+    @NotNull
+    public ChunkSelectionStrategy getChunkSelectionStrategy() {
+        return chunkSelectionStrategy;
+    }
+    
+    /**
      * Represents a conversation message in history.
      */
     public static record ConversationMessage(@NotNull String role, @NotNull String content) {
@@ -196,6 +254,7 @@ public final class QueryParam {
         private String userPrompt = null;
         private boolean enableRerank = true;
         private String projectId = null;
+        private ChunkSelectionStrategy chunkSelectionStrategy = ChunkSelectionStrategy.VECTOR;
         
         public Builder mode(@NotNull Mode mode) {
             this.mode = Objects.requireNonNull(mode, "mode must not be null");
@@ -277,6 +336,17 @@ public final class QueryParam {
             return this;
         }
         
+        /**
+         * Sets the chunk selection strategy.
+         * 
+         * @param strategy The chunk selection strategy (default: VECTOR)
+         * @return This builder
+         */
+        public Builder chunkSelectionStrategy(@NotNull ChunkSelectionStrategy strategy) {
+            this.chunkSelectionStrategy = Objects.requireNonNull(strategy, "chunkSelectionStrategy must not be null");
+            return this;
+        }
+        
         public QueryParam build() {
             Objects.requireNonNull(projectId, "projectId must not be null");
             return new QueryParam(this);
@@ -309,7 +379,8 @@ public final class QueryParam {
             .ids(this.ids)
             .userPrompt(this.userPrompt)
             .enableRerank(this.enableRerank)
-            .projectId(this.projectId);
+            .projectId(this.projectId)
+            .chunkSelectionStrategy(this.chunkSelectionStrategy);
     }
     
     /**

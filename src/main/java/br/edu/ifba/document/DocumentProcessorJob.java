@@ -16,7 +16,7 @@ public class DocumentProcessorJob {
     private static final Logger LOG = Logger.getLogger(DocumentProcessorJob.class);
 
     @Inject
-    DocumentRepository documentRepository;
+    DocumentRepositoryPort documentRepository;
 
     @Inject
     LightRAGService lightragService;
@@ -37,6 +37,8 @@ public class DocumentProcessorJob {
             LOG.infof("Found %d documents to mark as PROCESSING.", documents.size());
             documents.forEach(doc -> {
                 doc.setStatus(DocumentStatus.PROCESSING);
+                // Explicitly update to persist changes (required for SQLite, harmless for PostgreSQL)
+                documentRepository.update(doc);
                 LOG.infof("Document %s marked as PROCESSING", doc.getId());
             });
         }
@@ -49,7 +51,7 @@ public class DocumentProcessorJob {
         final long startTime = System.currentTimeMillis();
         LOG.info("Starting LightRAG document processing job...");
         
-        final List<Document> processingDocuments = documentRepository.list("status", DocumentStatus.PROCESSING);
+        final List<Document> processingDocuments = documentRepository.findByStatus(DocumentStatus.PROCESSING);
         
         if (processingDocuments.isEmpty()) {
             LOG.info("No documents in PROCESSING state.");
@@ -64,7 +66,7 @@ public class DocumentProcessorJob {
 
     void processDocument(final java.util.UUID documentId) {
         try {
-            final Document document = documentRepository.findById(documentId);
+            final Document document = documentRepository.findDocumentById(documentId).orElse(null);
             if (document == null) {
                 LOG.errorf("Document %s not found", documentId);
                 return;
@@ -116,18 +118,20 @@ public class DocumentProcessorJob {
 
     @Transactional
     void markAsProcessed(final java.util.UUID documentId) {
-        final Document document = documentRepository.findById(documentId);
+        final Document document = documentRepository.findDocumentById(documentId).orElse(null);
         if (document != null) {
             document.setStatus(DocumentStatus.PROCESSED);
+            documentRepository.update(document);
             LOG.infof("Document %s marked as PROCESSED", documentId);
         }
     }
 
     @Transactional
     void markAsFailed(final java.util.UUID documentId) {
-        final Document document = documentRepository.findById(documentId);
+        final Document document = documentRepository.findDocumentById(documentId).orElse(null);
         if (document != null) {
             document.setStatus(DocumentStatus.NOT_PROCESSED);
+            documentRepository.update(document);
             LOG.infof("Document %s marked as NOT_PROCESSED for retry", documentId);
         }
     }

@@ -3,6 +3,9 @@ package br.edu.ifba.lightrag.core;
 import br.edu.ifba.lightrag.embedding.EmbeddingFunction;
 import br.edu.ifba.lightrag.llm.LLMFunction;
 import br.edu.ifba.lightrag.query.*;
+import br.edu.ifba.lightrag.query.pipeline.GlobalPipelineExecutor;
+import br.edu.ifba.lightrag.query.pipeline.HybridPipelineExecutor;
+import br.edu.ifba.lightrag.query.pipeline.LocalPipelineExecutor;
 import br.edu.ifba.lightrag.rerank.Reranker;
 import br.edu.ifba.lightrag.storage.DocStatusStorage;
 import br.edu.ifba.lightrag.storage.DocStatusStorage.DocumentStatus;
@@ -81,6 +84,11 @@ public class LightRAG {
     private volatile HybridQueryExecutor hybridExecutor;
     private volatile NaiveQueryExecutor naiveExecutor;
     private volatile MixQueryExecutor mixExecutor;
+    
+    // Pipeline-based query executors (initialized lazily when usePipelineExecutors=true)
+    private volatile LocalPipelineExecutor localPipelineExecutor;
+    private volatile GlobalPipelineExecutor globalPipelineExecutor;
+    private volatile HybridPipelineExecutor hybridPipelineExecutor;
     
     /**
      * Creates a new Builder instance.
@@ -389,36 +397,97 @@ public class LightRAG {
             graphStorage.initialize(),
             docStatusStorage.initialize()
         ).thenRun(() -> {
-            // Initialize query executors
-            this.localExecutor = new LocalQueryExecutor(
-                llmFunction, embeddingFunction, chunkStorage, 
-                chunkVectorStorage, entityVectorStorage, graphStorage,
-                localSystemPrompt
-            );
-            this.globalExecutor = new GlobalQueryExecutor(
-                llmFunction, embeddingFunction, chunkStorage,
-                chunkVectorStorage, entityVectorStorage, graphStorage,
-                globalSystemPrompt
-            );
-            this.hybridExecutor = new HybridQueryExecutor(
-                llmFunction, embeddingFunction, chunkStorage,
-                chunkVectorStorage, entityVectorStorage, graphStorage,
-                localSystemPrompt, globalSystemPrompt, hybridSystemPrompt
-            );
-            this.naiveExecutor = new NaiveQueryExecutor(
-                llmFunction, embeddingFunction, chunkStorage,
-                chunkVectorStorage, entityVectorStorage, graphStorage,
-                naiveSystemPrompt
-            );
-            this.mixExecutor = new MixQueryExecutor(
-                llmFunction, embeddingFunction, chunkStorage,
-                chunkVectorStorage, entityVectorStorage, graphStorage,
-                mixSystemPrompt, reranker
-            );
+            // Initialize query executors based on configuration
+            if (config.usePipelineExecutors()) {
+                initializePipelineExecutors();
+            } else {
+                initializeLegacyExecutors();
+            }
             
             initialized = true;
-            logger.info("LightRAG initialized successfully");
+            logger.info("LightRAG initialized successfully (pipeline executors: {})", config.usePipelineExecutors());
         });
+    }
+    
+    /**
+     * Initializes legacy query executors (default behavior).
+     */
+    private void initializeLegacyExecutors() {
+        logger.debug("Initializing legacy query executors");
+        
+        this.localExecutor = new LocalQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage, 
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            localSystemPrompt
+        );
+        this.globalExecutor = new GlobalQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            globalSystemPrompt
+        );
+        this.hybridExecutor = new HybridQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            localSystemPrompt, globalSystemPrompt, hybridSystemPrompt
+        );
+        this.naiveExecutor = new NaiveQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            naiveSystemPrompt
+        );
+        this.mixExecutor = new MixQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            mixSystemPrompt, reranker
+        );
+    }
+    
+    /**
+     * Initializes pipeline-based query executors (experimental).
+     * 
+     * <p>Pipeline executors use a stage-based architecture for query processing:</p>
+     * <ol>
+     *   <li>Search Stage - Vector similarity search (chunks and/or entities)</li>
+     *   <li>Truncate Stage - Token budget management</li>
+     *   <li>Merge Stage - Round-robin interleaving of results</li>
+     *   <li>Context Builder Stage - Final prompt construction</li>
+     * </ol>
+     */
+    private void initializePipelineExecutors() {
+        logger.debug("Initializing pipeline-based query executors");
+        
+        // Create optional keyword extractor if extraction config is available
+        KeywordExtractor keywordExtractor = extractionConfig != null 
+            ? new LLMKeywordExtractor(llmFunction, extractionConfig)
+            : null;
+        
+        this.localPipelineExecutor = new LocalPipelineExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            localSystemPrompt, keywordExtractor, extractionConfig
+        );
+        this.globalPipelineExecutor = new GlobalPipelineExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            globalSystemPrompt, keywordExtractor, extractionConfig
+        );
+        this.hybridPipelineExecutor = new HybridPipelineExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            hybridSystemPrompt, keywordExtractor, extractionConfig
+        );
+        
+        // Initialize legacy executors for modes that don't have pipeline equivalents yet
+        this.naiveExecutor = new NaiveQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            naiveSystemPrompt
+        );
+        this.mixExecutor = new MixQueryExecutor(
+            llmFunction, embeddingFunction, chunkStorage,
+            chunkVectorStorage, entityVectorStorage, graphStorage,
+            mixSystemPrompt, reranker
+        );
     }
     
     /**
@@ -923,35 +992,92 @@ public class LightRAG {
     
     /**
      * Merges gleaning results with accumulated results, deduplicating by entity name.
+     * 
+     * <p>When duplicate entities are found, keeps the entity with the longer description,
+     * matching the behavior of the official Python LightRAG implementation.</p>
      */
     private KGExtractionChunkResult mergeExtractionResults(
         @NotNull KGExtractionChunkResult accumulated, 
         @NotNull KGExtractionChunkResult newResults
     ) {
-        // Merge entities (deduplicate by name, keeping first occurrence)
+        // Merge entities (deduplicate by name, keeping entity with longer description)
         Map<String, Entity> entityMap = new HashMap<>();
         for (Entity e : accumulated.entities()) {
-            entityMap.putIfAbsent(e.getEntityName().toLowerCase(), e);
+            mergeEntityKeepLonger(entityMap, e);
         }
         for (Entity e : newResults.entities()) {
-            entityMap.putIfAbsent(e.getEntityName().toLowerCase(), e);
+            mergeEntityKeepLonger(entityMap, e);
         }
         
-        // Merge relations (deduplicate by src->tgt pair)
+        // Merge relations (deduplicate by src->tgt pair, keeping relation with longer description)
         Map<String, Relation> relationMap = new HashMap<>();
         for (Relation r : accumulated.relations()) {
-            String key = r.getSrcId().toLowerCase() + "->" + r.getTgtId().toLowerCase();
-            relationMap.putIfAbsent(key, r);
+            mergeRelationKeepLonger(relationMap, r);
         }
         for (Relation r : newResults.relations()) {
-            String key = r.getSrcId().toLowerCase() + "->" + r.getTgtId().toLowerCase();
-            relationMap.putIfAbsent(key, r);
+            mergeRelationKeepLonger(relationMap, r);
         }
         
         return new KGExtractionChunkResult(
             new ArrayList<>(entityMap.values()),
             new ArrayList<>(relationMap.values())
         );
+    }
+    
+    /**
+     * Merges an entity into the map, keeping the one with the longer description.
+     * 
+     * <p>This matches the Python LightRAG behavior where during gleaning,
+     * if the same entity is extracted multiple times, the description with more
+     * detail (longer length) is preferred.</p>
+     * 
+     * @param entityMap The map of entities keyed by lowercase name
+     * @param entity The entity to merge
+     */
+    private void mergeEntityKeepLonger(@NotNull Map<String, Entity> entityMap, @NotNull Entity entity) {
+        String key = entity.getEntityName().toLowerCase();
+        Entity existing = entityMap.get(key);
+        
+        if (existing == null) {
+            entityMap.put(key, entity);
+            return;
+        }
+        
+        // Keep the entity with the longer description
+        int existingDescLen = existing.getDescription() != null ? existing.getDescription().length() : 0;
+        int newDescLen = entity.getDescription() != null ? entity.getDescription().length() : 0;
+        
+        if (newDescLen > existingDescLen) {
+            logger.trace("Merging entity '{}': keeping longer description ({} > {} chars)", 
+                entity.getEntityName(), newDescLen, existingDescLen);
+            entityMap.put(key, entity);
+        }
+    }
+    
+    /**
+     * Merges a relation into the map, keeping the one with the longer description.
+     * 
+     * @param relationMap The map of relations keyed by lowercase src->tgt pair
+     * @param relation The relation to merge
+     */
+    private void mergeRelationKeepLonger(@NotNull Map<String, Relation> relationMap, @NotNull Relation relation) {
+        String key = relation.getSrcId().toLowerCase() + "->" + relation.getTgtId().toLowerCase();
+        Relation existing = relationMap.get(key);
+        
+        if (existing == null) {
+            relationMap.put(key, relation);
+            return;
+        }
+        
+        // Keep the relation with the longer description
+        int existingDescLen = existing.getDescription() != null ? existing.getDescription().length() : 0;
+        int newDescLen = relation.getDescription() != null ? relation.getDescription().length() : 0;
+        
+        if (newDescLen > existingDescLen) {
+            logger.trace("Merging relation '{}->{}': keeping longer description ({} > {} chars)", 
+                relation.getSrcId(), relation.getTgtId(), newDescLen, existingDescLen);
+            relationMap.put(key, relation);
+        }
     }
     
     /**
@@ -1013,6 +1139,8 @@ public class LightRAG {
      * Expects LightRAG tuple-delimiter format:
      * - entity{tuple_delimiter}entity_name{tuple_delimiter}entity_type{tuple_delimiter}entity_description
      * - relation{tuple_delimiter}src_id{tuple_delimiter}tgt_id{tuple_delimiter}relationship_keywords{tuple_delimiter}relationship_description
+     * 
+     * <p>Includes robust delimiter corruption handling ported from official LightRAG Python implementation.</p>
      */
     private KGExtractionChunkResult parseKGExtractionResponse(
         @NotNull String chunkId,
@@ -1022,30 +1150,48 @@ public class LightRAG {
             List<Entity> entities = new ArrayList<>();
             List<Relation> relations = new ArrayList<>();
             
-            // Parse line-by-line for tuple-delimiter format
-            String[] lines = response.split("\n");
+            // Step 1: Fix delimiter corruption in the response (ported from Python fix_tuple_delimiter_corruption)
+            String fixedResponse = fixTupleDelimiterCorruption(response);
             
-            for (String line : lines) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
+            // Step 2: Split by multiple possible markers (newline, completion delimiter variants)
+            List<String> records = splitByMultipleMarkers(fixedResponse, 
+                List.of("\n", "{completion_delimiter}", "<|COMPLETE|>", "<|complete|>"));
+            
+            for (String record : records) {
+                record = record.trim();
+                if (record.isEmpty()) continue;
                 
-                // Parse entity lines: entity{tuple_delimiter}name{tuple_delimiter}type{tuple_delimiter}description
-                if (line.startsWith("entity{tuple_delimiter}")) {
-                    Entity entity = parseEntityLine(line, chunkId);
-                    if (entity != null) {
-                        entities.add(entity);
+                // Step 3: Handle case where LLM used tuple_delimiter as record separator
+                // This recovers entity/relation records that were incorrectly concatenated
+                List<String> fixedRecords = recoverMalformedRecords(record);
+                
+                for (String fixedRecord : fixedRecords) {
+                    fixedRecord = fixedRecord.trim();
+                    if (fixedRecord.isEmpty()) continue;
+                    
+                    // Parse entity lines: entity{tuple_delimiter}name{tuple_delimiter}type{tuple_delimiter}description
+                    if (fixedRecord.startsWith("entity{tuple_delimiter}") || 
+                        fixedRecord.startsWith("entity<|#|>") ||
+                        fixedRecord.toLowerCase().startsWith("entity{tuple_delimiter}")) {
+                        Entity entity = parseEntityLine(fixedRecord, chunkId);
+                        if (entity != null) {
+                            entities.add(entity);
+                        }
                     }
-                }
-                // Parse relation lines: relation{tuple_delimiter}src{tuple_delimiter}tgt{tuple_delimiter}keywords{tuple_delimiter}description
-                else if (line.startsWith("relation{tuple_delimiter}")) {
-                    Relation relation = parseRelationLine(line, chunkId);
-                    if (relation != null) {
-                        relations.add(relation);
+                    // Parse relation lines: relation{tuple_delimiter}src{tuple_delimiter}tgt{tuple_delimiter}keywords{tuple_delimiter}description
+                    else if (fixedRecord.startsWith("relation{tuple_delimiter}") ||
+                             fixedRecord.startsWith("relation<|#|>") ||
+                             fixedRecord.toLowerCase().startsWith("relation{tuple_delimiter}")) {
+                        Relation relation = parseRelationLine(fixedRecord, chunkId);
+                        if (relation != null) {
+                            relations.add(relation);
+                        }
                     }
-                }
-                // Stop at completion delimiter
-                else if (line.contains("{completion_delimiter}")) {
-                    break;
+                    // Stop at completion delimiter
+                    else if (fixedRecord.contains("{completion_delimiter}") || 
+                             fixedRecord.contains("<|COMPLETE|>")) {
+                        break;
+                    }
                 }
             }
             
@@ -1058,6 +1204,147 @@ public class LightRAG {
             logger.warn("Failed to parse KG extraction response for chunk {}: {}", chunkId, e.getMessage());
             return new KGExtractionChunkResult(List.of(), List.of());
         }
+    }
+    
+    /**
+     * Fixes delimiter corruption in LLM response.
+     * Ported from official LightRAG Python: fix_tuple_delimiter_corruption()
+     * 
+     * <p>Common corruption patterns:</p>
+     * <ul>
+     *   <li>Missing pipe symbols: "{tuple_delimiter}" instead of "<|#|>"</li>
+     *   <li>Escaped delimiters: "\{tuple_delimiter\}"</li>
+     *   <li>Partial delimiters: "<|#" or "#|>"</li>
+     *   <li>Mixed case: "{TUPLE_DELIMITER}"</li>
+     * </ul>
+     * 
+     * @param text the raw LLM response
+     * @return text with corrected delimiters
+     */
+    private String fixTupleDelimiterCorruption(@NotNull String text) {
+        String fixed = text;
+        
+        // Pattern 1: Normalize common delimiter variants to standard form
+        // LLMs sometimes output the actual delimiter value instead of placeholder
+        fixed = fixed.replace("<|#|>", "{tuple_delimiter}");
+        fixed = fixed.replace("<|COMPLETE|>", "{completion_delimiter}");
+        fixed = fixed.replace("<|complete|>", "{completion_delimiter}");
+        
+        // Pattern 2: Fix escaped delimiters
+        fixed = fixed.replace("\\{tuple_delimiter\\}", "{tuple_delimiter}");
+        fixed = fixed.replace("\\{completion_delimiter\\}", "{completion_delimiter}");
+        
+        // Pattern 3: Fix case variations (case-insensitive replacement)
+        fixed = fixed.replaceAll("(?i)\\{TUPLE_DELIMITER\\}", "{tuple_delimiter}");
+        fixed = fixed.replaceAll("(?i)\\{COMPLETION_DELIMITER\\}", "{completion_delimiter}");
+        
+        // Pattern 4: Fix partial/corrupted delimiters
+        // "<|#" at start of field -> likely meant to be delimiter
+        fixed = fixed.replaceAll("<\\|#(?![|>])", "{tuple_delimiter}");
+        // "#|>" at end -> likely meant to be delimiter
+        fixed = fixed.replaceAll("(?<!<\\|)#\\|>", "{tuple_delimiter}");
+        
+        // Pattern 5: Fix double/triple delimiters (LLM sometimes stutters)
+        fixed = fixed.replaceAll("(\\{tuple_delimiter\\}){2,}", "{tuple_delimiter}");
+        
+        // Pattern 6: Fix delimiters with extra whitespace
+        fixed = fixed.replaceAll("\\{\\s*tuple_delimiter\\s*\\}", "{tuple_delimiter}");
+        fixed = fixed.replaceAll("\\{\\s*completion_delimiter\\s*\\}", "{completion_delimiter}");
+        
+        return fixed;
+    }
+    
+    /**
+     * Splits text by multiple possible markers.
+     * Ported from official LightRAG Python: split_string_by_multi_markers()
+     * 
+     * @param text the text to split
+     * @param markers list of markers to split on
+     * @return list of split segments
+     */
+    private List<String> splitByMultipleMarkers(@NotNull String text, @NotNull List<String> markers) {
+        List<String> result = new ArrayList<>();
+        result.add(text);
+        
+        for (String marker : markers) {
+            List<String> newResult = new ArrayList<>();
+            for (String segment : result) {
+                // Split by this marker
+                String[] parts = segment.split(java.util.regex.Pattern.quote(marker), -1);
+                for (String part : parts) {
+                    if (!part.trim().isEmpty()) {
+                        newResult.add(part);
+                    }
+                }
+            }
+            result = newResult;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Recovers malformed records where LLM used tuple_delimiter as record separator.
+     * Ported from official LightRAG Python record recovery logic.
+     * 
+     * <p>Handles cases like:</p>
+     * <pre>
+     * "entity{tuple_delimiter}A{tuple_delimiter}TYPE{tuple_delimiter}desc{tuple_delimiter}entity{tuple_delimiter}B..."
+     * </pre>
+     * <p>Which should be two separate entity records.</p>
+     * 
+     * @param record the potentially malformed record
+     * @return list of recovered records
+     */
+    private List<String> recoverMalformedRecords(@NotNull String record) {
+        List<String> recovered = new ArrayList<>();
+        
+        // Check if record contains embedded entity/relation markers
+        // Pattern: ...{tuple_delimiter}entity{tuple_delimiter}... or ...{tuple_delimiter}relation{tuple_delimiter}...
+        String entityMarker = "{tuple_delimiter}entity{tuple_delimiter}";
+        String relationMarker = "{tuple_delimiter}relation{tuple_delimiter}";
+        
+        String lowerRecord = record.toLowerCase();
+        
+        // Check for embedded entity records
+        if (lowerRecord.contains(entityMarker.toLowerCase())) {
+            // Split on the entity marker pattern
+            String[] parts = record.split("(?i)\\{tuple_delimiter\\}entity\\{tuple_delimiter\\}");
+            boolean first = true;
+            for (String part : parts) {
+                if (!part.trim().isEmpty()) {
+                    if (first) {
+                        // First part includes the initial "entity" prefix
+                        recovered.add(part);
+                        first = false;
+                    } else {
+                        // Subsequent parts need "entity{tuple_delimiter}" prefix restored
+                        recovered.add("entity{tuple_delimiter}" + part);
+                    }
+                }
+            }
+        }
+        // Check for embedded relation records
+        else if (lowerRecord.contains(relationMarker.toLowerCase())) {
+            String[] parts = record.split("(?i)\\{tuple_delimiter\\}relation\\{tuple_delimiter\\}");
+            boolean first = true;
+            for (String part : parts) {
+                if (!part.trim().isEmpty()) {
+                    if (first) {
+                        recovered.add(part);
+                        first = false;
+                    } else {
+                        recovered.add("relation{tuple_delimiter}" + part);
+                    }
+                }
+            }
+        }
+        else {
+            // No embedded markers, return as-is
+            recovered.add(record);
+        }
+        
+        return recovered;
     }
     
     /**
@@ -1362,14 +1649,23 @@ public class LightRAG {
     
     // Query execution methods - delegate to appropriate executors
     private CompletableFuture<LightRAGQueryResult> executeLocalQuery(String query, QueryParam param) {
+        if (config.usePipelineExecutors() && localPipelineExecutor != null) {
+            return localPipelineExecutor.execute(query, param);
+        }
         return localExecutor.execute(query, param);
     }
     
     private CompletableFuture<LightRAGQueryResult> executeGlobalQuery(String query, QueryParam param) {
+        if (config.usePipelineExecutors() && globalPipelineExecutor != null) {
+            return globalPipelineExecutor.execute(query, param);
+        }
         return globalExecutor.execute(query, param);
     }
     
     private CompletableFuture<LightRAGQueryResult> executeHybridQuery(String query, QueryParam param) {
+        if (config.usePipelineExecutors() && hybridPipelineExecutor != null) {
+            return hybridPipelineExecutor.execute(query, param);
+        }
         return hybridExecutor.execute(query, param);
     }
     
@@ -1418,6 +1714,17 @@ public class LightRAG {
     
     /**
      * Configuration for LightRAG.
+     * 
+     * @param chunkSize Size of text chunks during document processing
+     * @param chunkOverlap Overlap between consecutive chunks
+     * @param maxTokens Maximum tokens for context in queries
+     * @param topK Number of top results to retrieve
+     * @param enableCache Whether to enable LLM response caching
+     * @param kgExtractionBatchSize Batch size for knowledge graph extraction
+     * @param embeddingBatchSize Batch size for embedding generation
+     * @param entityDescriptionMaxLength Maximum length for entity descriptions
+     * @param entityDescriptionSeparator Separator for concatenating descriptions
+     * @param usePipelineExecutors Whether to use pipeline-based query executors (experimental)
      */
     public record LightRAGConfig(
         int chunkSize,
@@ -1428,7 +1735,8 @@ public class LightRAG {
         int kgExtractionBatchSize,
         int embeddingBatchSize,
         int entityDescriptionMaxLength,
-        String entityDescriptionSeparator
+        String entityDescriptionSeparator,
+        boolean usePipelineExecutors
     ) {
         public static LightRAGConfig defaults() {
             return new LightRAGConfig(
@@ -1440,7 +1748,42 @@ public class LightRAG {
                 20,    // kgExtractionBatchSize
                 32,    // embeddingBatchSize
                 1000,  // entityDescriptionMaxLength
-                " | "  // entityDescriptionSeparator
+                " | ", // entityDescriptionSeparator
+                false  // usePipelineExecutors (default: use legacy executors)
+            );
+        }
+        
+        /**
+         * Creates a config with pipeline executors enabled.
+         * 
+         * @return LightRAGConfig with pipeline executors enabled
+         */
+        public static LightRAGConfig withPipelineExecutors() {
+            return new LightRAGConfig(
+                1200,  // chunkSize
+                100,   // chunkOverlap
+                4000,  // maxTokens
+                10,    // topK
+                true,  // enableCache
+                20,    // kgExtractionBatchSize
+                32,    // embeddingBatchSize
+                1000,  // entityDescriptionMaxLength
+                " | ", // entityDescriptionSeparator
+                true   // usePipelineExecutors
+            );
+        }
+        
+        /**
+         * Returns a new config with pipeline executors toggled.
+         * 
+         * @param enabled Whether to enable pipeline executors
+         * @return New LightRAGConfig with the specified setting
+         */
+        public LightRAGConfig withUsePipelineExecutors(boolean enabled) {
+            return new LightRAGConfig(
+                chunkSize, chunkOverlap, maxTokens, topK, enableCache,
+                kgExtractionBatchSize, embeddingBatchSize,
+                entityDescriptionMaxLength, entityDescriptionSeparator, enabled
             );
         }
     }

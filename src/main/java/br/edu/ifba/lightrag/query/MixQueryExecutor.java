@@ -15,20 +15,40 @@ import br.edu.ifba.lightrag.storage.VectorStorage;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * Executes MIX mode queries.
- * Combines knowledge graph traversal with vector retrieval for comprehensive results.
- * Uses graph expansion to find related entities and relationships.
- * Supports optional reranking of retrieved chunks.
+ * 
+ * <p>Combines knowledge graph traversal with vector retrieval for comprehensive results.
+ * Uses graph expansion to find related entities and relationships.</p>
+ * 
+ * <h2>Features:</h2>
+ * <ul>
+ *   <li>Supports optional reranking of retrieved chunks</li>
+ *   <li>Supports weighted chunk selection based on entity connections</li>
+ * </ul>
+ * 
+ * <h2>Chunk Selection Strategy:</h2>
+ * <ul>
+ *   <li>VECTOR: Pure vector similarity search (default)</li>
+ *   <li>WEIGHTED: Boosts chunks connected to relevant entities found in graph search</li>
+ * </ul>
  */
 public class MixQueryExecutor extends QueryExecutor {
     
     private final String systemPrompt;
     @Nullable
     private final Reranker reranker;
+    @Nullable
+    private final ChunkSelector chunkSelector;
     
     /**
      * Creates a MixQueryExecutor without reranking support.
@@ -43,7 +63,7 @@ public class MixQueryExecutor extends QueryExecutor {
         @NotNull String systemPrompt
     ) {
         this(llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage, 
-             entityVectorStorage, graphStorage, systemPrompt, null);
+             entityVectorStorage, graphStorage, systemPrompt, null, null);
     }
     
     /**
@@ -68,9 +88,38 @@ public class MixQueryExecutor extends QueryExecutor {
         @NotNull String systemPrompt,
         @Nullable Reranker reranker
     ) {
+        this(llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage,
+             entityVectorStorage, graphStorage, systemPrompt, reranker, null);
+    }
+    
+    /**
+     * Creates a MixQueryExecutor with optional reranking and chunk selection support.
+     *
+     * @param llmFunction the LLM function for generating answers
+     * @param embeddingFunction the embedding function for query embedding
+     * @param chunkStorage the KV storage for chunks
+     * @param chunkVectorStorage the vector storage for chunk embeddings
+     * @param entityVectorStorage the vector storage for entity embeddings
+     * @param graphStorage the graph storage for entity/relation data
+     * @param systemPrompt the system prompt for the LLM
+     * @param reranker optional reranker for improving chunk relevance (can be null)
+     * @param chunkSelector optional chunk selector for weighted selection (can be null)
+     */
+    public MixQueryExecutor(
+        @NotNull LLMFunction llmFunction,
+        @NotNull EmbeddingFunction embeddingFunction,
+        @NotNull KVStorage chunkStorage,
+        @NotNull VectorStorage chunkVectorStorage,
+        @NotNull VectorStorage entityVectorStorage,
+        @NotNull GraphStorage graphStorage,
+        @NotNull String systemPrompt,
+        @Nullable Reranker reranker,
+        @Nullable ChunkSelector chunkSelector
+    ) {
         super(llmFunction, embeddingFunction, chunkStorage, chunkVectorStorage, entityVectorStorage, graphStorage);
         this.systemPrompt = systemPrompt;
         this.reranker = reranker;
+        this.chunkSelector = chunkSelector;
     }
     
     @Override
@@ -78,7 +127,8 @@ public class MixQueryExecutor extends QueryExecutor {
         @NotNull String query,
         @NotNull QueryParam param
     ) {
-        logger.info("Executing MIX query");
+        logger.info("Executing MIX query with chunk selection strategy: {}", 
+            param.getChunkSelectionStrategy());
         
         // Step 1: Embed the query
         return embeddingFunction.embedSingle(query)
@@ -93,74 +143,64 @@ public class MixQueryExecutor extends QueryExecutor {
                 CompletableFuture<List<VectorStorage.VectorSearchResult>> entitySearchFuture = 
                     entityVectorStorage.query(queryEmbedding, topK, entityFilter);
                 
-                // Step 3: Search for relevant chunks in parallel with project filter
-                // Request more chunks if reranking is enabled (to have a good pool to rerank from)
-                int chunkSearchCount = param.isEnableRerank() && reranker != null 
-                    ? param.getChunkTopK() * 2 
-                    : param.getChunkTopK();
-                VectorStorage.VectorFilter chunkFilter = new VectorStorage.VectorFilter(
-                    "chunk", 
-                    null, 
-                    param.getProjectId()
-                );
-                CompletableFuture<List<VectorStorage.VectorSearchResult>> chunkSearchFuture = 
-                    chunkVectorStorage.query(queryEmbedding, chunkSearchCount, chunkFilter);
-                
-                return CompletableFuture.allOf(entitySearchFuture, chunkSearchFuture)
-                    .thenCompose(v -> {
-                        List<VectorStorage.VectorSearchResult> entityResults = entitySearchFuture.join();
-                        List<VectorStorage.VectorSearchResult> chunkResults = chunkSearchFuture.join();
-                        
-                        // Apply reranking if enabled and reranker is available
-                        List<VectorStorage.VectorSearchResult> finalChunkResults = 
-                            applyReranking(query, chunkResults, param);
-                        
-                        // Extract entity names from content field (not vector ID)
-                        List<String> seedEntityIds = entityResults.stream()
-                            .map(result -> result.metadata().content())
-                            .toList();
-                        
-                        if (seedEntityIds.isEmpty()) {
-                            // Only chunks available
-                            List<LightRAGQueryResult.SourceChunk> chunkSources = convertToSourceChunks(finalChunkResults);
-                            return CompletableFuture.completedFuture(
-                                new ResultWithSources(chunkSources, Collections.emptyList())
-                            );
-                        }
-                        
-                        // Step 4: Expand graph to find related entities (1-hop neighborhood)
-                        return expandGraph(param.getProjectId(), seedEntityIds, 1)
-                            .thenCompose(expandedEntityIds -> {
-                                // Step 5: Get all entities and relations
-                                return graphStorage.getEntities(param.getProjectId(), expandedEntityIds)
-                                    .thenCompose(entities -> 
-                                        getAllRelations(param.getProjectId(), expandedEntityIds)
-                                            .thenApply(relations -> {
-                                                // Convert entity results to source chunks
-                                                List<LightRAGQueryResult.SourceChunk> entitySources = new ArrayList<>();
-                                                for (VectorStorage.VectorSearchResult result : entityResults) {
-                                                    entitySources.add(new LightRAGQueryResult.SourceChunk(
-                                                        result.id(),
-                                                        result.metadata().content() != null ? result.metadata().content() : "",
-                                                        result.score(),
-                                                        result.metadata().documentId() != null ? result.metadata().documentId() : result.id(),
-                                                        result.id(),
-                                                        0,
-                                                        "entity"
-                                                    ));
-                                                }
-                                                
-                                                // Convert chunk results to source chunks
-                                                List<LightRAGQueryResult.SourceChunk> chunkSources = convertToSourceChunks(finalChunkResults);
-                                                
-                                                return new ResultWithSources(
-                                                    chunkSources,
-                                                    entitySources
-                                                );
-                                            })
-                                    );
-                            });
-                    });
+                return entitySearchFuture.thenCompose(entityResults -> {
+                    // Extract entity names from content field for context
+                    List<String> entityNames = entityResults.stream()
+                        .map(result -> result.metadata().content())
+                        .filter(name -> name != null && !name.isEmpty())
+                        .toList();
+                    
+                    // Step 3: Select chunks using strategy (VECTOR or WEIGHTED)
+                    return selectChunks(queryEmbedding, query, entityNames, param)
+                        .thenCompose(chunkResults -> {
+                            // Apply reranking if enabled and reranker is available
+                            List<ChunkSelector.ScoredChunk> finalChunkResults = 
+                                applyRerankingToScoredChunks(query, chunkResults, param);
+                            
+                            if (entityNames.isEmpty()) {
+                                // Only chunks available
+                                List<LightRAGQueryResult.SourceChunk> chunkSources = 
+                                    convertScoredChunksToSource(finalChunkResults);
+                                return CompletableFuture.completedFuture(
+                                    new ResultWithSources(chunkSources, Collections.emptyList())
+                                );
+                            }
+                            
+                            // Step 4: Expand graph to find related entities (1-hop neighborhood)
+                            return expandGraph(param.getProjectId(), entityNames, 1)
+                                .thenCompose(expandedEntityIds -> {
+                                    // Step 5: Get all entities and relations
+                                    return graphStorage.getEntities(param.getProjectId(), expandedEntityIds)
+                                        .thenCompose(entities -> 
+                                            getAllRelations(param.getProjectId(), expandedEntityIds)
+                                                .thenApply(relations -> {
+                                                    // Convert entity results to source chunks
+                                                    List<LightRAGQueryResult.SourceChunk> entitySources = new ArrayList<>();
+                                                    for (VectorStorage.VectorSearchResult result : entityResults) {
+                                                        entitySources.add(new LightRAGQueryResult.SourceChunk(
+                                                            result.id(),
+                                                            result.metadata().content() != null ? result.metadata().content() : "",
+                                                            result.score(),
+                                                            result.metadata().documentId() != null ? result.metadata().documentId() : result.id(),
+                                                            result.id(),
+                                                            0,
+                                                            "entity"
+                                                        ));
+                                                    }
+                                                    
+                                                    // Convert chunk results to source chunks
+                                                    List<LightRAGQueryResult.SourceChunk> chunkSources = 
+                                                        convertScoredChunksToSource(finalChunkResults);
+                                                    
+                                                    return new ResultWithSources(
+                                                        chunkSources,
+                                                        entitySources
+                                                    );
+                                                })
+                                        );
+                                });
+                        });
+                });
             })
             .thenCompose(resultWithSources -> {
                 // Combine all sources: entities without citations, chunks with UUID citations
@@ -215,6 +255,76 @@ public class MixQueryExecutor extends QueryExecutor {
                         allSources.size()
                     ));
             });
+    }
+    
+    /**
+     * Selects chunks using the configured strategy.
+     * 
+     * <p>If a ChunkSelector is provided, uses it with entity context for weighted selection.
+     * Otherwise, falls back to direct vector storage query.</p>
+     */
+    private CompletableFuture<List<ChunkSelector.ScoredChunk>> selectChunks(
+        @NotNull Object queryEmbedding,
+        @NotNull String originalQuery,
+        @NotNull List<String> entityNames,
+        @NotNull QueryParam param
+    ) {
+        String projectId = param.getProjectId();
+        
+        // Request more chunks if reranking is enabled
+        int chunkSearchCount = param.isEnableRerank() && reranker != null 
+            ? param.getChunkTopK() * 2 
+            : param.getChunkTopK();
+        
+        // Use ChunkSelector if available
+        if (chunkSelector != null) {
+            // Build selection context with entity names from graph search
+            ChunkSelector.SelectionContext context = new ChunkSelector.SelectionContext(
+                originalQuery,
+                entityNames,
+                List.of(), // Relation keywords could be added in future
+                Map.of()
+            );
+            
+            logger.debug("Using {} chunk selector with {} entity names from graph search", 
+                chunkSelector.getStrategyName(), entityNames.size());
+            
+            return chunkSelector.selectChunks(queryEmbedding, projectId, chunkSearchCount, context);
+        }
+        
+        // Fallback to direct vector query
+        logger.debug("Using direct vector query (no chunk selector)");
+        VectorStorage.VectorFilter filter = new VectorStorage.VectorFilter(
+            "chunk", 
+            null, 
+            projectId
+        );
+        
+        return chunkVectorStorage.query(queryEmbedding, chunkSearchCount, filter)
+            .thenApply(results -> results.stream()
+                .map(ChunkSelector.ScoredChunk::fromVectorResult)
+                .toList());
+    }
+    
+    /**
+     * Converts scored chunks to source chunks for query result.
+     */
+    private List<LightRAGQueryResult.SourceChunk> convertScoredChunksToSource(
+        @NotNull List<ChunkSelector.ScoredChunk> scoredChunks
+    ) {
+        List<LightRAGQueryResult.SourceChunk> sources = new ArrayList<>();
+        for (ChunkSelector.ScoredChunk chunk : scoredChunks) {
+            sources.add(new LightRAGQueryResult.SourceChunk(
+                chunk.chunkId(),
+                chunk.content(),
+                chunk.score(),
+                chunk.documentId(),
+                chunk.chunkId(),
+                chunk.chunkIndex(),
+                "chunk"
+            ));
+        }
+        return sources;
     }
     
     /**
@@ -333,6 +443,7 @@ public class MixQueryExecutor extends QueryExecutor {
     /**
      * Formats entities and relations into a readable context string.
      */
+    @SuppressWarnings("unused")
     private String formatGraphContextWithEntities(
         @NotNull List<Entity> entities,
         @NotNull List<Relation> relations
@@ -377,81 +488,82 @@ public class MixQueryExecutor extends QueryExecutor {
     }
     
     /**
-     * Applies reranking to chunk search results if enabled.
+     * Applies reranking to scored chunks if enabled.
      * 
      * <p>When reranking is enabled and a reranker is available:
      * <ol>
-     *   <li>Converts vector search results to Chunk objects</li>
+     *   <li>Converts scored chunks to Chunk objects</li>
      *   <li>Reranks chunks using the configured reranker</li>
-     *   <li>Converts back to VectorSearchResult format with updated scores</li>
-     *   <li>Returns only topK results</li>
+     *   <li>Returns only topK results with updated scores</li>
      * </ol>
      * 
      * <p>Falls back to original results if reranking is disabled or reranker is unavailable.
      *
      * @param query the query string for reranking
-     * @param chunkResults original vector search results
+     * @param scoredChunks original scored chunks
      * @param param query parameters including rerank flag and topK
      * @return reranked results or original if reranking not applicable
      */
-    private List<VectorStorage.VectorSearchResult> applyReranking(
+    private List<ChunkSelector.ScoredChunk> applyRerankingToScoredChunks(
         @NotNull String query,
-        @NotNull List<VectorStorage.VectorSearchResult> chunkResults,
+        @NotNull List<ChunkSelector.ScoredChunk> scoredChunks,
         @NotNull QueryParam param
     ) {
         // Skip if reranking disabled, no reranker, or no chunks
-        if (!param.isEnableRerank() || reranker == null || chunkResults.isEmpty()) {
+        if (!param.isEnableRerank() || reranker == null || scoredChunks.isEmpty()) {
             logger.debug("Reranking skipped: enabled={}, reranker={}, chunks={}",
                 param.isEnableRerank(), reranker != null ? reranker.getProviderName() : "null", 
-                Integer.valueOf(chunkResults.size()));
+                Integer.valueOf(scoredChunks.size()));
             // Limit to topK if we fetched extra for reranking
-            return chunkResults.size() > param.getChunkTopK() 
-                ? chunkResults.subList(0, param.getChunkTopK()) 
-                : chunkResults;
+            return scoredChunks.size() > param.getChunkTopK() 
+                ? scoredChunks.subList(0, param.getChunkTopK()) 
+                : scoredChunks;
         }
         
         // Check if reranker is available
         if (!reranker.isAvailable()) {
             logger.warn("Reranker {} not available, using original order", reranker.getProviderName());
-            return chunkResults.size() > param.getChunkTopK() 
-                ? chunkResults.subList(0, param.getChunkTopK()) 
-                : chunkResults;
+            return scoredChunks.size() > param.getChunkTopK() 
+                ? scoredChunks.subList(0, param.getChunkTopK()) 
+                : scoredChunks;
         }
         
         logger.debug("Applying reranking with {} to {} chunks", 
-            reranker.getProviderName(), Integer.valueOf(chunkResults.size()));
+            reranker.getProviderName(), Integer.valueOf(scoredChunks.size()));
         
         // Convert to Chunk objects
         List<Chunk> chunks = new ArrayList<>();
-        Map<String, VectorStorage.VectorSearchResult> resultByChunkId = new HashMap<>();
+        Map<String, ChunkSelector.ScoredChunk> chunkByChunkId = new HashMap<>();
         
-        for (VectorStorage.VectorSearchResult result : chunkResults) {
-            String content = result.metadata().content();
+        for (ChunkSelector.ScoredChunk scored : scoredChunks) {
+            String content = scored.content();
             if (content != null && !content.isEmpty()) {
                 Chunk chunk = new Chunk(
                     content,
-                    result.metadata().documentId(),
-                    result.id(),
+                    scored.documentId(),
+                    scored.chunkId(),
                     0  // tokens not needed for reranking
                 );
                 chunks.add(chunk);
-                resultByChunkId.put(result.id(), result);
+                chunkByChunkId.put(scored.chunkId(), scored);
             }
         }
         
         // Rerank
         List<RerankedChunk> rerankedChunks = reranker.rerank(query, chunks, param.getChunkTopK());
         
-        // Convert back to VectorSearchResult with updated scores
-        List<VectorStorage.VectorSearchResult> rerankedResults = new ArrayList<>();
+        // Convert back to ScoredChunk with updated scores
+        List<ChunkSelector.ScoredChunk> rerankedResults = new ArrayList<>();
         for (RerankedChunk reranked : rerankedChunks) {
-            VectorStorage.VectorSearchResult original = resultByChunkId.get(reranked.chunk().getChunkId());
+            ChunkSelector.ScoredChunk original = chunkByChunkId.get(reranked.chunk().getChunkId());
             if (original != null) {
                 // Create new result with reranked score
-                rerankedResults.add(new VectorStorage.VectorSearchResult(
-                    original.id(),
+                rerankedResults.add(new ChunkSelector.ScoredChunk(
+                    original.chunkId(),
+                    original.content(),
                     reranked.relevanceScore(),  // Updated score from reranker
-                    original.metadata()
+                    original.documentId(),
+                    original.chunkIndex()
                 ));
             }
         }

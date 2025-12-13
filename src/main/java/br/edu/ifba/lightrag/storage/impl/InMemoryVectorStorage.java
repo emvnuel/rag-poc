@@ -222,6 +222,21 @@ public class InMemoryVectorStorage implements VectorStorage {
     }
     
     @Override
+    public CompletableFuture<Boolean> hasVectors(@NotNull String documentId) {
+        ensureInitialized();
+        return CompletableFuture.supplyAsync(() -> {
+            for (VectorEntry entry : storage.values()) {
+                if (documentId.equals(entry.metadata().documentId())) {
+                    logger.debug("Document {} has vectors: true", documentId);
+                    return true;
+                }
+            }
+            logger.debug("Document {} has vectors: false", documentId);
+            return false;
+        });
+    }
+    
+    @Override
     public void close() throws Exception {
         if (initialized) {
             storage.clear();

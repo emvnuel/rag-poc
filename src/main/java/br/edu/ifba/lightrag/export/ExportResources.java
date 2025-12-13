@@ -3,7 +3,7 @@ package br.edu.ifba.lightrag.export;
 import br.edu.ifba.lightrag.core.Entity;
 import br.edu.ifba.lightrag.core.Relation;
 import br.edu.ifba.lightrag.storage.GraphStorage;
-import br.edu.ifba.project.ProjectRepository;
+import br.edu.ifba.project.ProjectRepositoryPort;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
@@ -59,7 +59,7 @@ public class ExportResources {
     GraphExporterFactory exporterFactory;
     
     @Inject
-    ProjectRepository projectRepository;
+    ProjectRepositoryPort projectRepository;
     
     /**
      * Exports the knowledge graph for a project.
@@ -165,7 +165,7 @@ public class ExportResources {
     private boolean projectExists(String projectId) {
         try {
             UUID uuid = UUID.fromString(projectId);
-            return projectRepository.findByIdOptional(uuid).isPresent();
+            return projectRepository.findProjectById(uuid).isPresent();
         } catch (IllegalArgumentException e) {
             LOG.warnf("Invalid project ID format: %s", projectId);
             return false;

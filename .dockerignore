@@ -13,3 +13,4 @@
 .env*
 test-data/
 *.bak
+.env
