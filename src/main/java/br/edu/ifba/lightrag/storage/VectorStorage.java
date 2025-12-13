@@ -114,6 +114,15 @@ public interface VectorStorage extends AutoCloseable {
     CompletableFuture<VectorEntry> get(@NotNull String id);
     
     /**
+     * Checks if a document has any vectors stored.
+     * Used to prevent duplicate processing and detect race conditions.
+     *
+     * @param documentId the document UUID
+     * @return true if the document has vectors, false otherwise
+     */
+    CompletableFuture<Boolean> hasVectors(@NotNull String documentId);
+    
+    /**
      * Clears all vectors from the storage.
      */
     CompletableFuture<Void> clear();

@@ -8,7 +8,7 @@ import java.util.UUID;
 
 import br.edu.ifba.exception.FileUploadException;
 import br.edu.ifba.exception.PdfProcessingException;
-import br.edu.ifba.project.ProjectService;
+import br.edu.ifba.project.ProjectServicePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
@@ -31,10 +31,10 @@ public class DocumentResources {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Inject
-    DocumentService documentService;
+    DocumentServicePort documentService;
 
     @Inject
-    ProjectService projectService;
+    ProjectServicePort projectService;
 
     @Inject
     DocumentExtractorFactory extractorFactory;

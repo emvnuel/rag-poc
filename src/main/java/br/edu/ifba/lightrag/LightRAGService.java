@@ -5,11 +5,10 @@ import br.edu.ifba.lightrag.adapters.QuarkusLLMAdapter;
 import br.edu.ifba.lightrag.core.LightRAG;
 import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
-import br.edu.ifba.lightrag.storage.impl.AgeConfig;
-import br.edu.ifba.lightrag.storage.impl.AgeGraphStorage;
+import br.edu.ifba.lightrag.storage.GraphStorage;
+import br.edu.ifba.lightrag.storage.VectorStorage;
 import br.edu.ifba.lightrag.storage.impl.InMemoryDocStatusStorage;
 import br.edu.ifba.lightrag.storage.impl.JsonKVStorage;
-import br.edu.ifba.lightrag.storage.impl.PgVectorStorage;
 import io.quarkus.runtime.Startup;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -25,9 +24,15 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Service that manages LightRAG instance with PostgreSQL (PgVector + Apache AGE) storage.
+ * Service that manages LightRAG instance with pluggable storage backends.
  * This service integrates LightRAG's knowledge graph extraction and querying capabilities
  * with the existing document processing pipeline.
+ * 
+ * <p>The storage backend is selected via configuration:</p>
+ * <ul>
+ *   <li>{@code lightrag.storage.backend=postgresql} - PostgreSQL with pgvector + Apache AGE</li>
+ *   <li>{@code lightrag.storage.backend=sqlite} - SQLite for local/edge deployment</li>
+ * </ul>
  */
 @ApplicationScoped
 @Startup
@@ -42,16 +47,10 @@ public class LightRAGService {
     QuarkusEmbeddingAdapter embeddingAdapter;
 
     @Inject
-    PgVectorStorage chunkVectorStorage;
+    VectorStorage vectorStorage;
 
     @Inject
-    PgVectorStorage entityVectorStorage;
-
-    @Inject
-    AgeGraphStorage graphStorage;
-
-    @Inject
-    AgeConfig ageConfig;
+    GraphStorage graphStorage;
 
     @Inject
     br.edu.ifba.lightrag.core.EntityResolver entityResolver;
@@ -156,7 +155,8 @@ public class LightRAGService {
                     kgExtractionBatchSize,
                     embeddingBatchSize,
                     entityDescriptionMaxLength,
-                    entityDescriptionSeparator
+                    entityDescriptionSeparator,
+                    false  // usePipelineExecutors (default: use legacy executors)
             );
 
             // Build LightRAG instance
@@ -166,8 +166,8 @@ public class LightRAGService {
                     .embeddingFunction(embeddingAdapter)
                     .chunkStorage(chunkKVStorage)
                     .llmCacheStorage(llmCacheStorage)
-                    .chunkVectorStorage(chunkVectorStorage)
-                    .entityVectorStorage(entityVectorStorage)
+                    .chunkVectorStorage(vectorStorage)
+                    .entityVectorStorage(vectorStorage)
                     .graphStorage(graphStorage)
                     .docStatusStorage(docStatusStorage)
                     .entityResolver(entityResolver)
@@ -337,7 +337,7 @@ public class LightRAGService {
      */
     public CompletableFuture<Boolean> hasDocumentVectors(final UUID documentId) {
         LOG.debugf("Checking if document %s has existing vectors", documentId);
-        return chunkVectorStorage.hasVectors(documentId.toString());
+        return vectorStorage.hasVectors(documentId.toString());
     }
 
     /**

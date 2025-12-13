@@ -6,7 +6,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import br.edu.ifba.document.DocumentInfoResponse;
-import br.edu.ifba.document.DocumentService;
+import br.edu.ifba.document.DocumentServicePort;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.DELETE;
@@ -24,10 +24,10 @@ import jakarta.ws.rs.core.Response;
 public class ProjectResources {
 
     @Inject
-    ProjectService projectService;
+    ProjectServicePort projectService;
 
     @Inject
-    DocumentService documentService;
+    DocumentServicePort documentService;
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)

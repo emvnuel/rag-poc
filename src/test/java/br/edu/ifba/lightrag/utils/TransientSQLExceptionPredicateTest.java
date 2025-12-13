@@ -286,4 +286,114 @@ class TransientSQLExceptionPredicateTest {
             assertFalse(predicate.test(ex));
         }
     }
+    
+    @Nested
+    @DisplayName("Message-based Detection (patterns)")
+    class MessageBasedDetection {
+
+        @Test
+        @DisplayName("should return true for connection refused message")
+        void testConnectionRefusedMessage() {
+            final SQLException ex = new SQLException("Connection refused", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for connection reset message")
+        void testConnectionResetMessage() {
+            final SQLException ex = new SQLException("Connection reset by peer", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for connection pool exhausted message")
+        void testConnectionPoolExhaustedMessage() {
+            final SQLException ex = new SQLException("Connection pool exhausted, no available connections", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for socket timeout message")
+        void testSocketTimeoutMessage() {
+            final SQLException ex = new SQLException("Socket timeout while waiting for response", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for I/O error message")
+        void testIoErrorMessage() {
+            final SQLException ex = new SQLException("I/O error during database communication", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for server shutdown message")
+        void testServerShutdownMessage() {
+            final SQLException ex = new SQLException("Server shutdown in progress", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for deadlock detected message")
+        void testDeadlockMessage() {
+            final SQLException ex = new SQLException("Deadlock detected while waiting for lock", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for too many connections message")
+        void testTooManyConnectionsMessage() {
+            final SQLException ex = new SQLException("Too many connections to the database", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for network timeout message")
+        void testNetworkTimeoutMessage() {
+            final SQLException ex = new SQLException("Network timeout occurred", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for read timed out message")
+        void testReadTimedOutMessage() {
+            final SQLException ex = new SQLException("Read timed out after 30000ms", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for unable to acquire connection message")
+        void testUnableToAcquireConnectionMessage() {
+            final SQLException ex = new SQLException("Unable to acquire connection from pool", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for terminating connection message")
+        void testTerminatingConnectionMessage() {
+            final SQLException ex = new SQLException("Terminating connection due to administrator command", (String) null);
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return true for message in wrapped RuntimeException")
+        void testMessageInWrappedException() {
+            final RuntimeException ex = new RuntimeException("Connection refused by remote host");
+            assertTrue(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return false for regular error message without patterns")
+        void testRegularErrorMessage() {
+            final SQLException ex = new SQLException("Error executing query SELECT * FROM users", (String) null);
+            assertFalse(predicate.test(ex));
+        }
+
+        @Test
+        @DisplayName("should return false for constraint violation message without SQLSTATE")
+        void testConstraintMessageWithoutSqlstate() {
+            final SQLException ex = new SQLException("Duplicate key value violates unique constraint", (String) null);
+            assertFalse(predicate.test(ex));
+        }
+    }
 }

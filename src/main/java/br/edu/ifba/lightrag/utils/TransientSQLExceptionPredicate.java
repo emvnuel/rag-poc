@@ -8,6 +8,7 @@ import java.sql.SQLTimeoutException;
 import java.sql.SQLTransientConnectionException;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Predicate to determine if an exception represents a transient SQL error
@@ -15,7 +16,7 @@ import java.util.function.Predicate;
  * 
  * <p>Classifies PostgreSQL SQLSTATE codes into transient (retryable) and
  * permanent (non-retryable) categories. Also recognizes Java SQL transient
- * exception types.</p>
+ * exception types and common error message patterns.</p>
  * 
  * <h2>Transient Error Categories (Will Retry):</h2>
  * <ul>
@@ -30,6 +31,15 @@ import java.util.function.Predicate;
  *   <li><b>23xxx</b> - Integrity constraint violation (unique, foreign key, not null)</li>
  *   <li><b>42xxx</b> - Syntax error or access rule violation</li>
  *   <li>All other codes</li>
+ * </ul>
+ * 
+ * <h2>Transient Error Message Patterns (Will Retry):</h2>
+ * <ul>
+ *   <li>Connection refused/reset/closed</li>
+ *   <li>Connection pool exhausted</li>
+ *   <li>Network timeout/unreachable</li>
+ *   <li>I/O error during communication</li>
+ *   <li>Server shutdown/restart</li>
  * </ul>
  * 
  * <h2>Usage with SmallRye Fault Tolerance:</h2>
@@ -64,6 +74,42 @@ public final class TransientSQLExceptionPredicate implements Predicate<Throwable
         "53", // Insufficient Resources
         "57"  // Operator Intervention
     );
+    
+    /**
+     * Regex patterns that indicate transient (retryable) errors based on error messages.
+     * These patterns catch cases where SQLSTATE may be null or not specific enough.
+     */
+    private static final Pattern TRANSIENT_MESSAGE_PATTERN = Pattern.compile(
+        "(?i)(" +
+        // Connection-related errors
+        "connection\\s+(refused|reset|closed|timed\\s*out|lost|terminated|broken)" +
+        "|unable\\s+to\\s+(connect|acquire\\s+connection)" +
+        "|no\\s+more\\s+connections" +
+        "|connection\\s+pool\\s+(exhausted|timeout)" +
+        "|too\\s+many\\s+(connections|clients)" +
+        // Network-related errors  
+        "|network\\s+(is\\s+unreachable|error|timeout)" +
+        "|socket\\s+(timeout|closed|reset|error)" +
+        "|i/o\\s+error" +
+        "|read\\s+timed\\s*out" +
+        "|connect\\s+timed\\s*out" +
+        // Server-related errors
+        "|server\\s+(closed|shutdown|restarting|not\\s+available)" +
+        "|database\\s+(unavailable|shutdown|restarting)" +
+        "|terminating\\s+connection" +
+        // Lock/deadlock errors
+        "|deadlock\\s+detected" +
+        "|lock\\s+wait\\s+timeout" +
+        "|could\\s+not\\s+serialize\\s+access" +
+        // Resource exhaustion
+        "|out\\s+of\\s+(memory|disk\\s+space)" +
+        "|temporary\\s+file\\s+.*\\s+could\\s+not\\s+be\\s+created" +
+        // Generic transient patterns
+        "|try\\s+(again|later)" +
+        "|temporarily\\s+unavailable" +
+        "|connection\\s+attempt\\s+failed" +
+        ")"
+    );
 
     /**
      * Tests whether the given exception represents a transient SQL error
@@ -71,7 +117,8 @@ public final class TransientSQLExceptionPredicate implements Predicate<Throwable
      * 
      * <p>This method traverses the exception cause chain to find any
      * SQLException and checks its SQLSTATE code against known transient
-     * error categories.</p>
+     * error categories. It also checks error messages for known transient
+     * patterns.</p>
      * 
      * @param throwable the exception to test (may be null)
      * @return {@code true} if the exception is transient and should be retried,
@@ -99,14 +146,23 @@ public final class TransientSQLExceptionPredicate implements Predicate<Throwable
             if (isTransientSqlState(sqlException)) {
                 return true;
             }
+            // Check error message patterns
+            if (isTransientByMessage(sqlException.getMessage())) {
+                return true;
+            }
             // Also check SQLException chain via getNextException()
             SQLException next = sqlException.getNextException();
             while (next != null) {
-                if (isTransientSqlState(next)) {
+                if (isTransientSqlState(next) || isTransientByMessage(next.getMessage())) {
                     return true;
                 }
                 next = next.getNextException();
             }
+        }
+        
+        // Check error message patterns for any throwable
+        if (isTransientByMessage(throwable.getMessage())) {
+            return true;
         }
 
         // Traverse cause chain
@@ -143,6 +199,27 @@ public final class TransientSQLExceptionPredicate implements Predicate<Throwable
         }
 
         logger.debug("Permanent SQLSTATE detected: {}, message: {}", sqlState, sqlException.getMessage());
+        return false;
+    }
+    
+    /**
+     * Determines if the error message indicates a transient error.
+     * This catches cases where SQLSTATE may be null or generic.
+     * 
+     * @param message the error message to check (may be null)
+     * @return {@code true} if the message indicates a transient error
+     */
+    private boolean isTransientByMessage(final String message) {
+        if (message == null || message.isEmpty()) {
+            return false;
+        }
+        
+        if (TRANSIENT_MESSAGE_PATTERN.matcher(message).find()) {
+            logger.debug("Transient error detected by message pattern: {}", 
+                message.length() > 100 ? message.substring(0, 100) + "..." : message);
+            return true;
+        }
+        
         return false;
     }
 }

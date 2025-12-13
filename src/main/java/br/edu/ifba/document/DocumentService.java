@@ -2,28 +2,39 @@ package br.edu.ifba.document;
 
 import br.edu.ifba.lightrag.deletion.DocumentDeletionService;
 import br.edu.ifba.lightrag.deletion.KnowledgeRebuildResult;
-import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import org.jboss.logging.Logger;
 
-@ApplicationScoped
-public class DocumentService {
+/**
+ * PostgreSQL/Hibernate implementation of DocumentServicePort.
+ * Uses JTA transactions for atomic operations.
+ * 
+ * <p><b>Note:</b> This class is now deprecated in favor of DocumentServiceProvider
+ * which handles runtime selection between PostgreSQL and SQLite backends.
+ * The @IfBuildProperty annotation was removed because it's a build-time annotation
+ * that doesn't work when switching profiles at runtime in dev mode.</p>
+ * 
+ * @deprecated Use DocumentServiceProvider instead for runtime backend selection
+ */
+public class DocumentService implements DocumentServicePort {
 
     private static final Logger LOG = Logger.getLogger(DocumentService.class);
 
     @Inject
-    DocumentRepository documentRepository;
+    DocumentRepositoryPort documentRepository;
 
     @Inject
     DocumentDeletionService documentDeletionService;
 
+    @Override
     @Transactional
     public Document create(final Document document) {
-        documentRepository.persist(document);
+        documentRepository.save(document);
         return document;
     }
 
+    @Override
     public Document findById(final java.util.UUID id) {
         return documentRepository.findByIdOrThrow(id);
     }
@@ -35,6 +46,7 @@ public class DocumentService {
      * @param documentId The document ID to delete
      * @param projectId The project ID (for graph cleanup)
      */
+    @Override
     @Transactional
     public void delete(final java.util.UUID documentId, final java.util.UUID projectId) {
         final Document document = documentRepository.findByIdOrThrow(documentId);
@@ -61,7 +73,7 @@ public class DocumentService {
         }
         
         // Delete the document (vectors will cascade automatically via FK constraint)
-        documentRepository.delete(document);
+        documentRepository.deleteDocument(document);
     }
     
     /**
@@ -72,6 +84,7 @@ public class DocumentService {
      * @param projectId The project ID (for graph cleanup)
      * @param skipRebuild If true, deletes all affected entities without rebuilding
      */
+    @Override
     @Transactional
     public void delete(final java.util.UUID documentId, final java.util.UUID projectId, final boolean skipRebuild) {
         final Document document = documentRepository.findByIdOrThrow(documentId);
@@ -89,13 +102,15 @@ public class DocumentService {
             throw new RuntimeException("Failed to delete graph data for document: " + documentId, e);
         }
         
-        documentRepository.delete(document);
+        documentRepository.deleteDocument(document);
     }
 
+    @Override
     public Document findByFileName(final String fileName) {
         return documentRepository.findByFileName(fileName);
     }
 
+    @Override
     public java.util.List<Document> findByProjectId(final java.util.UUID projectId) {
         return documentRepository.findByProjectId(projectId);
     }
@@ -107,6 +122,7 @@ public class DocumentService {
      * @param documentId The document ID
      * @return Progress response (100% if processed, 0% otherwise)
      */
+    @Override
     public DocumentProgressResponse getProcessingProgress(final java.util.UUID documentId) {
         final Document document = documentRepository.findByIdOrThrow(documentId);
         

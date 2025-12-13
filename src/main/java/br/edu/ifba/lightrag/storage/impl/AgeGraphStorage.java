@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.smallrye.faulttolerance.api.ExponentialBackoff;
 import io.smallrye.faulttolerance.api.RetryWhen;
+import io.quarkus.arc.properties.IfBuildProperty;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.faulttolerance.Retry;
@@ -32,6 +33,7 @@ import java.util.concurrent.Executors;
  * AGE uses Cypher-like query language and stores graphs in PostgreSQL.
  */
 @ApplicationScoped
+@IfBuildProperty(name = "lightrag.storage.backend", stringValue = "postgresql", enableIfMissing = true)
 public class AgeGraphStorage implements GraphStorage {
     
     private static final Logger logger = LoggerFactory.getLogger(AgeGraphStorage.class);
@@ -780,43 +782,219 @@ public class AgeGraphStorage implements GraphStorage {
     
     @Override
     public CompletableFuture<GraphSubgraph> traverse(@NotNull String projectId, @NotNull String startEntity, int maxDepth) {
+        // Delegate to BFS traversal with unlimited nodes (0 = no limit)
+        return traverseBFS(projectId, startEntity, maxDepth, 0);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<GraphSubgraph> traverseBFS(
+            @NotNull String projectId, 
+            @NotNull String startEntity, 
+            int maxDepth, 
+            int maxNodes) {
         return CompletableFuture.supplyAsync(() -> {
             validateProjectId(projectId);
             validateGraphExists(projectId);
             String graphName = getGraphName(projectId);
             
-            try {
-                List<Entity> entities = new ArrayList<>();
-                List<Relation> relations = new ArrayList<>();
+            String normalizedStart = normalizeEntityName(startEntity);
+            
+            // BFS data structures
+            java.util.Set<String> visitedEntityNames = new java.util.LinkedHashSet<>();
+            java.util.Set<String> visitedRelationKeys = new java.util.HashSet<>();
+            java.util.Queue<String> currentLevel = new java.util.LinkedList<>();
+            java.util.Map<String, Entity> entityMap = new java.util.HashMap<>();
+            List<Relation> relations = new ArrayList<>();
+            
+            // Initialize with start entity
+            currentLevel.add(normalizedStart);
+            visitedEntityNames.add(normalizedStart);
+            
+            int currentDepth = 0;
+            final int effectiveMaxNodes = maxNodes > 0 ? maxNodes : Integer.MAX_VALUE;
+            
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
                 
-                String normalizedStart = normalizeEntityName(startEntity);
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
                 
-                // Get all entities within maxDepth hops from start entity
-                String entitiesCypher = String.format(
-                    "MATCH (start:Entity {name: '%s'})-[*0..%d]-(e:Entity) RETURN DISTINCT e",
-                    escapeCypher(normalizedStart),
-                    maxDepth
-                );
-                entities = queryCypherForEntities(graphName, entitiesCypher);
+                // Fetch start entity
+                Entity startEntityObj = getEntityWithStatement(stmt, graphName, normalizedStart);
+                if (startEntityObj != null) {
+                    entityMap.put(normalizedStart, startEntityObj);
+                } else {
+                    logger.warn("Start entity not found: {} in graph {}", startEntity, graphName);
+                    return new GraphSubgraph(List.of(), List.of());
+                }
                 
-                // Get all relations between entities within maxDepth
-                String relationsCypher = String.format(
-                    "MATCH (start:Entity {name: '%s'})-[*0..%d]-(e:Entity)-[r:RELATED_TO]-(other:Entity) " +
-                    "RETURN DISTINCT e.name, other.name, r",
-                    escapeCypher(normalizedStart),
-                    maxDepth
-                );
-                relations = queryCypherForRelations(graphName, relationsCypher);
+                // BFS level-by-level traversal
+                while (!currentLevel.isEmpty() && currentDepth < maxDepth) {
+                    // Check node limit
+                    if (visitedEntityNames.size() >= effectiveMaxNodes) {
+                        logger.debug("BFS traversal reached maxNodes limit: {}", effectiveMaxNodes);
+                        break;
+                    }
+                    
+                    // Process all nodes at current level
+                    java.util.Queue<String> nextLevel = new java.util.LinkedList<>();
+                    List<String> currentLevelNodes = new ArrayList<>(currentLevel);
+                    currentLevel.clear();
+                    
+                    // Batch query neighbors for all nodes at current level
+                    // This is more efficient than querying one node at a time
+                    List<NeighborInfo> neighbors = getNeighborsBatch(stmt, graphName, currentLevelNodes);
+                    
+                    for (NeighborInfo neighbor : neighbors) {
+                        // Track relation (avoid duplicates using key)
+                        String relationKey = neighbor.srcName + "->" + neighbor.tgtName;
+                        String reverseKey = neighbor.tgtName + "->" + neighbor.srcName;
+                        
+                        if (!visitedRelationKeys.contains(relationKey) && !visitedRelationKeys.contains(reverseKey)) {
+                            visitedRelationKeys.add(relationKey);
+                            relations.add(neighbor.relation);
+                        }
+                        
+                        // Track neighbor entity
+                        String neighborName = neighbor.neighborName;
+                        if (!visitedEntityNames.contains(neighborName)) {
+                            // Check node limit before adding
+                            if (visitedEntityNames.size() >= effectiveMaxNodes) {
+                                break;
+                            }
+                            
+                            visitedEntityNames.add(neighborName);
+                            nextLevel.add(neighborName);
+                            
+                            // Fetch entity details
+                            Entity neighborEntity = getEntityWithStatement(stmt, graphName, neighborName);
+                            if (neighborEntity != null) {
+                                entityMap.put(neighborName, neighborEntity);
+                            }
+                        }
+                    }
+                    
+                    currentLevel = nextLevel;
+                    currentDepth++;
+                }
                 
-                logger.debug("Traversed from entity {} (maxDepth={}) on graph {} for project {}: {} entities, {} relations", 
-                    startEntity, maxDepth, graphName, projectId, entities.size(), relations.size());
-                return new GraphSubgraph(entities, relations);
+                // Build result
+                List<Entity> resultEntities = new ArrayList<>(entityMap.values());
                 
-            } catch (Exception e) {
-                logger.error("Failed to traverse from entity {} on graph {} for project {}: {}", startEntity, graphName, projectId, e.getMessage());
+                logger.debug("BFS traversed from entity {} (maxDepth={}, maxNodes={}) on graph {} for project {}: {} entities, {} relations", 
+                    startEntity, maxDepth, maxNodes, graphName, projectId, resultEntities.size(), relations.size());
+                
+                return new GraphSubgraph(resultEntities, relations);
+                
+            } catch (SQLException e) {
+                logger.error("Failed to BFS traverse from entity {} on graph {} for project {}: {}", 
+                    startEntity, graphName, projectId, e.getMessage());
                 return new GraphSubgraph(List.of(), List.of());
             }
         }, executor);
+    }
+    
+    /**
+     * Helper record to hold neighbor information during BFS traversal.
+     */
+    private record NeighborInfo(String srcName, String tgtName, String neighborName, Relation relation) {}
+    
+    /**
+     * Batch queries neighbors for multiple entities at once.
+     * More efficient than per-entity queries for BFS level processing.
+     * 
+     * @param stmt the statement to use (already configured with AGE)
+     * @param graphName the graph name
+     * @param entityNames the entities to get neighbors for
+     * @return list of neighbor info (entity names and relations)
+     */
+    private List<NeighborInfo> getNeighborsBatch(Statement stmt, String graphName, List<String> entityNames) throws SQLException {
+        if (entityNames.isEmpty()) {
+            return List.of();
+        }
+        
+        List<NeighborInfo> neighbors = new ArrayList<>();
+        
+        // Build IN clause for batch query
+        String namesClause = entityNames.stream()
+            .map(name -> "'" + escapeCypher(name) + "'")
+            .reduce((a, b) -> a + ", " + b)
+            .orElse("");
+        
+        // Query both outgoing and incoming relations in one query
+        // This is more efficient than two separate queries
+        String cypher = String.format(
+            "MATCH (e:Entity)-[r:RELATED_TO]-(neighbor:Entity) " +
+            "WHERE e.name IN [%s] " +
+            "RETURN e.name, neighbor.name, r, " +
+            "CASE WHEN startNode(r) = e THEN 'outgoing' ELSE 'incoming' END AS direction",
+            namesClause
+        );
+        
+        String sql = String.format(
+            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (e_name agtype, neighbor_name agtype, r agtype, direction agtype)",
+            graphName,
+            cypher
+        );
+        
+        try (ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                String eName = cleanAgtypeString(rs.getString(1));
+                String neighborName = cleanAgtypeString(rs.getString(2));
+                String relationJson = rs.getString(3);
+                String direction = cleanAgtypeString(rs.getString(4));
+                
+                // Determine source and target based on direction
+                String srcName, tgtName;
+                if ("outgoing".equals(direction)) {
+                    srcName = eName;
+                    tgtName = neighborName;
+                } else {
+                    srcName = neighborName;
+                    tgtName = eName;
+                }
+                
+                Relation relation = parseRelationFromAgtype(srcName, tgtName, relationJson);
+                if (relation != null) {
+                    neighbors.add(new NeighborInfo(srcName, tgtName, neighborName, relation));
+                }
+            }
+        }
+        
+        return neighbors;
+    }
+    
+    /**
+     * Gets a single entity using an existing statement (avoids connection overhead).
+     * 
+     * @param stmt the statement to use (already configured with AGE)
+     * @param graphName the graph name
+     * @param entityName the normalized entity name
+     * @return the entity or null if not found
+     */
+    private Entity getEntityWithStatement(Statement stmt, String graphName, String entityName) throws SQLException {
+        String cypher = String.format(
+            "MATCH (e:Entity {name: '%s'}) RETURN e",
+            escapeCypher(entityName)
+        );
+        
+        String sql = String.format(
+            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (e agtype)",
+            graphName,
+            cypher
+        );
+        
+        try (ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                String agtypeJson = rs.getString(1);
+                return parseEntityFromAgtype(agtypeJson);
+            }
+        }
+        
+        return null;
     }
     
     @Override
@@ -848,6 +1026,161 @@ public class AgeGraphStorage implements GraphStorage {
         }, executor);
     }
     
+    // ===== Batch Operations for Performance =====
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<java.util.Map<String, Integer>> getNodeDegreesBatch(
+            @NotNull String projectId, 
+            @NotNull List<String> entityNames, 
+            int batchSize) {
+        
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(java.util.Map.of());
+        }
+        
+        final int effectiveBatchSize = batchSize > 0 ? batchSize : 500;
+        
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            java.util.Map<String, Integer> degreeMap = new java.util.HashMap<>();
+            
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
+                
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                
+                // Process entities in batches
+                for (int i = 0; i < entityNames.size(); i += effectiveBatchSize) {
+                    int endIndex = Math.min(i + effectiveBatchSize, entityNames.size());
+                    List<String> batch = entityNames.subList(i, endIndex);
+                    
+                    String namesClause = batch.stream()
+                        .map(name -> "'" + escapeCypher(normalizeEntityName(name)) + "'")
+                        .reduce((a, b) -> a + ", " + b)
+                        .orElse("");
+                    
+                    // Count both incoming and outgoing relationships for each entity
+                    String cypher = String.format(
+                        "MATCH (e:Entity) WHERE e.name IN [%s] " +
+                        "OPTIONAL MATCH (e)-[r:RELATED_TO]-() " +
+                        "RETURN e.name, count(r) AS degree",
+                        namesClause
+                    );
+                    
+                    String sql = String.format(
+                        "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (name agtype, degree agtype)",
+                        graphName,
+                        cypher
+                    );
+                    
+                    try (ResultSet rs = stmt.executeQuery(sql)) {
+                        while (rs.next()) {
+                            String name = cleanAgtypeString(rs.getString(1));
+                            int degree = Integer.parseInt(rs.getString(2));
+                            degreeMap.put(name, degree);
+                        }
+                    }
+                }
+                
+                // Add zero degree for entities not found
+                for (String entityName : entityNames) {
+                    String normalizedName = normalizeEntityName(entityName);
+                    degreeMap.putIfAbsent(normalizedName, 0);
+                }
+                
+                logger.debug("Retrieved degrees for {} entities on graph {} for project {}", 
+                    degreeMap.size(), graphName, projectId);
+                
+            } catch (SQLException e) {
+                logger.error("Failed to get node degrees batch for project: {}", projectId, e);
+                throw new RuntimeException("Failed to get node degrees batch", e);
+            }
+            
+            return degreeMap;
+        }, executor);
+    }
+    
+    @Override
+    @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
+    @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
+    @RetryWhen(exception = TransientSQLExceptionPredicate.class)
+    public CompletableFuture<java.util.Map<String, Entity>> getEntitiesMapBatch(
+            @NotNull String projectId, 
+            @NotNull List<String> entityNames, 
+            int batchSize) {
+        
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(java.util.Map.of());
+        }
+        
+        final int effectiveBatchSize = batchSize > 0 ? batchSize : 1000;
+        
+        return CompletableFuture.supplyAsync(() -> {
+            validateProjectId(projectId);
+            validateGraphExists(projectId);
+            String graphName = getGraphName(projectId);
+            
+            java.util.Map<String, Entity> entityMap = new java.util.HashMap<>();
+            
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
+                
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                
+                // Process entities in batches
+                for (int i = 0; i < entityNames.size(); i += effectiveBatchSize) {
+                    int endIndex = Math.min(i + effectiveBatchSize, entityNames.size());
+                    List<String> batch = entityNames.subList(i, endIndex);
+                    
+                    String namesClause = batch.stream()
+                        .map(name -> "'" + escapeCypher(normalizeEntityName(name)) + "'")
+                        .reduce((a, b) -> a + ", " + b)
+                        .orElse("");
+                    
+                    String cypher = String.format(
+                        "MATCH (e:Entity) WHERE e.name IN [%s] RETURN e",
+                        namesClause
+                    );
+                    
+                    String sql = String.format(
+                        "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (e agtype)",
+                        graphName,
+                        cypher
+                    );
+                    
+                    try (ResultSet rs = stmt.executeQuery(sql)) {
+                        while (rs.next()) {
+                            String agtypeJson = rs.getString(1);
+                            Entity entity = parseEntityFromAgtype(agtypeJson);
+                            if (entity != null) {
+                                entityMap.put(entity.getEntityName(), entity);
+                            }
+                        }
+                    }
+                }
+                
+                logger.debug("Retrieved {} entities in batch on graph {} for project {}", 
+                    entityMap.size(), graphName, projectId);
+                
+            } catch (SQLException e) {
+                logger.error("Failed to get entities batch for project: {}", projectId, e);
+                throw new RuntimeException("Failed to get entities batch", e);
+            }
+            
+            return entityMap;
+        }, executor);
+    }
+    
+    // ===== Statistics Operations =====
+    
     @Override
     @Retry(maxRetries = 3, delay = 200, delayUnit = ChronoUnit.MILLIS, maxDuration = 30, durationUnit = ChronoUnit.SECONDS)
     @ExponentialBackoff(maxDelay = 5, maxDelayUnit = ChronoUnit.SECONDS)
@@ -858,14 +1191,63 @@ public class AgeGraphStorage implements GraphStorage {
             validateGraphExists(projectId);
             String graphName = getGraphName(projectId);
             
-            try {
-                // Count entities
-                String entityCountCypher = "MATCH (e:Entity) RETURN count(e) AS count";
-                long entityCount = queryCypherForCount(graphName, entityCountCypher);
+            try (Connection conn = config.getConnection();
+                 Statement stmt = conn.createStatement()) {
                 
-                // Count relations
-                String relationCountCypher = "MATCH ()-[r:RELATED_TO]->() RETURN count(r) AS count";
-                long relationCount = queryCypherForCount(graphName, relationCountCypher);
+                // Use native SQL to query AGE catalog tables directly for better performance
+                // This avoids the overhead of Cypher parsing and execution planning
+                // 
+                // AGE stores:
+                // - Entities in: {graph_name}."Entity" table
+                // - Relations in: {graph_name}."RELATED_TO" table
+                // 
+                // We use reltuples from pg_class for fast approximate counts
+                // Note: reltuples can be -1 (never analyzed) or stale
+                // For exact counts or when reltuples is unreliable, we fall back to Cypher
+                
+                long entityCount = -1;
+                long relationCount = -1;
+                
+                // Query entity count from pg_class (fast, approximate)
+                String entityCountSql = String.format(
+                    "SELECT COALESCE(reltuples::bigint, -1) FROM pg_class " +
+                    "WHERE relname = 'Entity' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = '%s')",
+                    graphName
+                );
+                
+                try (ResultSet rs = stmt.executeQuery(entityCountSql)) {
+                    if (rs.next()) {
+                        entityCount = rs.getLong(1);
+                    }
+                }
+                
+                // Query relation count from pg_class (fast, approximate)
+                String relationCountSql = String.format(
+                    "SELECT COALESCE(reltuples::bigint, -1) FROM pg_class " +
+                    "WHERE relname = 'RELATED_TO' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = '%s')",
+                    graphName
+                );
+                
+                try (ResultSet rs = stmt.executeQuery(relationCountSql)) {
+                    if (rs.next()) {
+                        relationCount = rs.getLong(1);
+                    }
+                }
+                
+                // If reltuples is unreliable (< 0 or table not found), fall back to exact Cypher count
+                // reltuples = -1 means table has never been analyzed
+                stmt.execute("LOAD 'age'");
+                stmt.execute("SET search_path = ag_catalog, \"$user\", public");
+                
+                if (entityCount < 0) {
+                    String cypher = "MATCH (e:Entity) RETURN count(e) AS count";
+                    entityCount = queryCypherForCountWithConnection(stmt, graphName, cypher);
+                }
+                
+                if (relationCount < 0) {
+                    String cypher = "MATCH ()-[r:RELATED_TO]->() RETURN count(r) AS count";
+                    relationCount = queryCypherForCountWithConnection(stmt, graphName, cypher);
+                }
                 
                 // Calculate average degree
                 double avgDegree = entityCount > 0 ? (2.0 * relationCount / entityCount) : 0.0;
@@ -874,11 +1256,31 @@ public class AgeGraphStorage implements GraphStorage {
                     graphName, projectId, entityCount, relationCount, avgDegree);
                 return new GraphStats(entityCount, relationCount, avgDegree);
                 
-            } catch (Exception e) {
+            } catch (SQLException e) {
                 logger.error("Failed to get graph stats for graph {} (project {}): {}", graphName, projectId, e.getMessage());
                 return new GraphStats(0, 0, 0.0);
             }
         }, executor);
+    }
+    
+    /**
+     * Helper method to execute a count query using an existing statement.
+     */
+    private long queryCypherForCountWithConnection(Statement stmt, String graphName, String cypher) throws SQLException {
+        String sql = String.format(
+            "SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (count agtype)",
+            graphName,
+            cypher
+        );
+        
+        try (ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                String countStr = rs.getString(1);
+                return Long.parseLong(countStr);
+            }
+        }
+        
+        return 0;
     }
     
     // ===== Batch Query Operations (spec-007) =====

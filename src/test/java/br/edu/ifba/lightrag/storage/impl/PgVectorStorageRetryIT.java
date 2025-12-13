@@ -16,6 +16,11 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -50,6 +55,9 @@ class PgVectorStorageRetryIT {
     @Inject
     VectorStorage vectorStorage;
 
+    @Inject
+    DataSource dataSource;
+
     @ConfigProperty(name = "lightrag.vector.dimension", defaultValue = "384")
     int vectorDimension;
 
@@ -61,6 +69,10 @@ class PgVectorStorageRetryIT {
     void setUp() throws Exception {
         projectId = UUID.randomUUID().toString();
         documentId = UUID.randomUUID().toString();
+        
+        // Create project and document records for FK constraints
+        createTestProjectAndDocument();
+        
         vectorStorage.initialize().join();
         logger.info("Set up test with projectId={}, documentId={}, dimension={}", 
             projectId, documentId, vectorDimension);
@@ -73,6 +85,56 @@ class PgVectorStorageRetryIT {
             vectorStorage.deleteBatch(createdVectorIds).join();
             logger.info("Cleaned up {} vectors", createdVectorIds.size());
             createdVectorIds.clear();
+        }
+        // Clean up project and document (CASCADE will handle related records)
+        cleanupTestProjectAndDocument();
+    }
+    
+    /**
+     * Creates test project and document records required by FK constraints.
+     */
+    private void createTestProjectAndDocument() throws Exception {
+        try (Connection conn = dataSource.getConnection()) {
+            Timestamp now = Timestamp.from(Instant.now());
+            
+            // Create project
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "INSERT INTO rag.projects (id, created_at, updated_at, name) VALUES (?::uuid, ?, ?, ?) ON CONFLICT (id) DO NOTHING")) {
+                stmt.setString(1, projectId);
+                stmt.setTimestamp(2, now);
+                stmt.setTimestamp(3, now);
+                stmt.setString(4, "Test Project");
+                stmt.executeUpdate();
+            }
+            
+            // Create document
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "INSERT INTO rag.documents (id, created_at, updated_at, type, status, file_name, content, project_id) " +
+                    "VALUES (?::uuid, ?, ?, ?, ?, ?, ?, ?::uuid) ON CONFLICT (id) DO NOTHING")) {
+                stmt.setString(1, documentId);
+                stmt.setTimestamp(2, now);
+                stmt.setTimestamp(3, now);
+                stmt.setString(4, "TEXT");
+                stmt.setString(5, "PROCESSED");
+                stmt.setString(6, "test.txt");
+                stmt.setString(7, "Test content");
+                stmt.setString(8, projectId);
+                stmt.executeUpdate();
+            }
+        }
+    }
+    
+    /**
+     * Cleans up test project and document records.
+     */
+    private void cleanupTestProjectAndDocument() throws Exception {
+        try (Connection conn = dataSource.getConnection()) {
+            // Delete project (CASCADE will delete documents and vectors)
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "DELETE FROM rag.projects WHERE id = ?::uuid")) {
+                stmt.setString(1, projectId);
+                stmt.executeUpdate();
+            }
         }
     }
 

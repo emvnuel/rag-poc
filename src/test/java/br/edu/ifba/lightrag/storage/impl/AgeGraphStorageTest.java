@@ -378,4 +378,351 @@ class AgeGraphStorageTest {
         assertEquals(1, stats2.entityCount(), "Project 2 should have 1 entity");
         assertEquals(0, stats2.relationCount(), "Project 2 should have 0 relations");
     }
+    
+    // ===== Batch Operations Tests =====
+    
+    /**
+     * Test getNodeDegreesBatch returns correct degrees for entities.
+     * 
+     * Scenario:
+     * - Create entities A, B, C
+     * - Create relations A -> B, A -> C, B -> C
+     * - A should have degree 2 (2 outgoing)
+     * - B should have degree 2 (1 incoming from A, 1 outgoing to C)
+     * - C should have degree 2 (2 incoming)
+     */
+    @Test
+    void testGetNodeDegreesBatch() {
+        // Create entities
+        final Entity entityA = new Entity("EntityA", "Type", "Entity A", null);
+        final Entity entityB = new Entity("EntityB", "Type", "Entity B", null);
+        final Entity entityC = new Entity("EntityC", "Type", "Entity C", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB, entityC)).join();
+        
+        // Create relations: A -> B, A -> C, B -> C
+        final Relation relAB = new Relation("EntityA", "EntityB", "A to B", "related", 1.0, null);
+        final Relation relAC = new Relation("EntityA", "EntityC", "A to C", "related", 1.0, null);
+        final Relation relBC = new Relation("EntityB", "EntityC", "B to C", "related", 1.0, null);
+        
+        graphStorage.upsertRelations(projectId1, List.of(relAB, relAC, relBC)).join();
+        
+        // Get degrees for all entities
+        final java.util.Map<String, Integer> degrees = graphStorage.getNodeDegreesBatch(
+            projectId1, 
+            List.of("EntityA", "EntityB", "EntityC"),
+            500
+        ).join();
+        
+        assertNotNull(degrees, "Degree map should not be null");
+        assertEquals(3, degrees.size(), "Should have degrees for 3 entities");
+        
+        // Verify degrees (note: entity names are normalized to lowercase)
+        assertEquals(2, degrees.get("entitya"), "EntityA should have degree 2");
+        assertEquals(2, degrees.get("entityb"), "EntityB should have degree 2");
+        assertEquals(2, degrees.get("entityc"), "EntityC should have degree 2");
+    }
+    
+    /**
+     * Test getNodeDegreesBatch with empty list returns empty map.
+     */
+    @Test
+    void testGetNodeDegreesBatchEmptyList() {
+        final java.util.Map<String, Integer> degrees = graphStorage.getNodeDegreesBatch(
+            projectId1, 
+            List.of(),
+            500
+        ).join();
+        
+        assertNotNull(degrees, "Degree map should not be null");
+        assertTrue(degrees.isEmpty(), "Degree map should be empty for empty input");
+    }
+    
+    /**
+     * Test getNodeDegreesBatch returns 0 for non-existent entities.
+     */
+    @Test
+    void testGetNodeDegreesBatchNonExistent() {
+        // Create one entity only
+        final Entity entityA = new Entity("EntityA", "Type", "Entity A", null);
+        graphStorage.upsertEntity(projectId1, entityA).join();
+        
+        // Query degrees including non-existent entity
+        final java.util.Map<String, Integer> degrees = graphStorage.getNodeDegreesBatch(
+            projectId1, 
+            List.of("EntityA", "NonExistent"),
+            500
+        ).join();
+        
+        assertNotNull(degrees, "Degree map should not be null");
+        assertEquals(0, degrees.get("entitya"), "EntityA should have degree 0 (no relations)");
+        assertEquals(0, degrees.get("nonexistent"), "NonExistent should have degree 0");
+    }
+    
+    /**
+     * Test getEntitiesMapBatch returns entities as a map.
+     */
+    @Test
+    void testGetEntitiesMapBatch() {
+        // Create entities
+        final Entity entityA = new Entity("EntityA", "Person", "Person A", null);
+        final Entity entityB = new Entity("EntityB", "Company", "Company B", null);
+        final Entity entityC = new Entity("EntityC", "Location", "Location C", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB, entityC)).join();
+        
+        // Get entities as map
+        final java.util.Map<String, Entity> entityMap = graphStorage.getEntitiesMapBatch(
+            projectId1,
+            List.of("EntityA", "EntityB"),
+            1000
+        ).join();
+        
+        assertNotNull(entityMap, "Entity map should not be null");
+        assertEquals(2, entityMap.size(), "Should have 2 entities in map");
+        
+        // Verify entities (note: entity names are normalized to lowercase)
+        assertNotNull(entityMap.get("entitya"), "Should have entitya");
+        assertNotNull(entityMap.get("entityb"), "Should have entityb");
+        assertEquals("person", entityMap.get("entitya").getEntityType().toLowerCase());
+        assertEquals("company", entityMap.get("entityb").getEntityType().toLowerCase());
+    }
+    
+    /**
+     * Test getEntitiesMapBatch with empty list returns empty map.
+     */
+    @Test
+    void testGetEntitiesMapBatchEmptyList() {
+        final java.util.Map<String, Entity> entityMap = graphStorage.getEntitiesMapBatch(
+            projectId1,
+            List.of(),
+            1000
+        ).join();
+        
+        assertNotNull(entityMap, "Entity map should not be null");
+        assertTrue(entityMap.isEmpty(), "Entity map should be empty for empty input");
+    }
+    
+    /**
+     * Test getEntitiesMapBatch with partial matches returns only found entities.
+     */
+    @Test
+    void testGetEntitiesMapBatchPartialMatch() {
+        // Create one entity only
+        final Entity entityA = new Entity("EntityA", "Type", "Entity A", null);
+        graphStorage.upsertEntity(projectId1, entityA).join();
+        
+        // Query for both existing and non-existing
+        final java.util.Map<String, Entity> entityMap = graphStorage.getEntitiesMapBatch(
+            projectId1,
+            List.of("EntityA", "NonExistent"),
+            1000
+        ).join();
+        
+        assertNotNull(entityMap, "Entity map should not be null");
+        assertEquals(1, entityMap.size(), "Should have only 1 entity in map");
+        assertNotNull(entityMap.get("entitya"), "Should have entitya");
+        assertFalse(entityMap.containsKey("nonexistent"), "Should not have nonexistent");
+    }
+    
+    // ===== BFS Traversal Tests =====
+    
+    /**
+     * Test traverseBFS with simple linear graph.
+     * 
+     * Graph: A -> B -> C
+     * 
+     * From A with maxDepth=2: Should return A, B, C
+     * From A with maxDepth=1: Should return A, B
+     */
+    @Test
+    void testTraverseBFSSimpleLinearGraph() {
+        // Create linear graph: A -> B -> C
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        final Entity entityB = new Entity("B", "Type", "Entity B", null);
+        final Entity entityC = new Entity("C", "Type", "Entity C", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB, entityC)).join();
+        
+        final Relation relAB = new Relation("A", "B", "A to B", "related", 1.0, null);
+        final Relation relBC = new Relation("B", "C", "B to C", "related", 1.0, null);
+        
+        graphStorage.upsertRelations(projectId1, List.of(relAB, relBC)).join();
+        
+        // Traverse from A with maxDepth=2 (should get all)
+        final GraphStorage.GraphSubgraph result1 = graphStorage.traverseBFS(projectId1, "A", 2, 0).join();
+        
+        assertNotNull(result1, "Result should not be null");
+        assertEquals(3, result1.entities().size(), "Should have 3 entities");
+        assertEquals(2, result1.relations().size(), "Should have 2 relations");
+        
+        // Traverse from A with maxDepth=1 (should get A and B only)
+        final GraphStorage.GraphSubgraph result2 = graphStorage.traverseBFS(projectId1, "A", 1, 0).join();
+        
+        assertNotNull(result2, "Result should not be null");
+        assertEquals(2, result2.entities().size(), "Should have 2 entities");
+        assertEquals(1, result2.relations().size(), "Should have 1 relation");
+    }
+    
+    /**
+     * Test traverseBFS with maxNodes limit.
+     * 
+     * Graph: A -> B, A -> C, A -> D, A -> E
+     * 
+     * From A with maxNodes=3: Should return only 3 entities
+     */
+    @Test
+    void testTraverseBFSMaxNodesLimit() {
+        // Create star graph: A connected to B, C, D, E
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        final Entity entityB = new Entity("B", "Type", "Entity B", null);
+        final Entity entityC = new Entity("C", "Type", "Entity C", null);
+        final Entity entityD = new Entity("D", "Type", "Entity D", null);
+        final Entity entityE = new Entity("E", "Type", "Entity E", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB, entityC, entityD, entityE)).join();
+        
+        final Relation relAB = new Relation("A", "B", "A to B", "related", 1.0, null);
+        final Relation relAC = new Relation("A", "C", "A to C", "related", 1.0, null);
+        final Relation relAD = new Relation("A", "D", "A to D", "related", 1.0, null);
+        final Relation relAE = new Relation("A", "E", "A to E", "related", 1.0, null);
+        
+        graphStorage.upsertRelations(projectId1, List.of(relAB, relAC, relAD, relAE)).join();
+        
+        // Traverse from A with maxNodes=3
+        final GraphStorage.GraphSubgraph result = graphStorage.traverseBFS(projectId1, "A", 10, 3).join();
+        
+        assertNotNull(result, "Result should not be null");
+        assertTrue(result.entities().size() <= 3, "Should have at most 3 entities due to maxNodes limit");
+        assertTrue(result.entities().size() >= 1, "Should have at least start entity");
+    }
+    
+    /**
+     * Test traverseBFS with depth 0 returns only start entity.
+     */
+    @Test
+    void testTraverseBFSDepthZero() {
+        // Create simple graph
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        final Entity entityB = new Entity("B", "Type", "Entity B", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB)).join();
+        
+        final Relation relAB = new Relation("A", "B", "A to B", "related", 1.0, null);
+        graphStorage.upsertRelation(projectId1, relAB).join();
+        
+        // Traverse from A with maxDepth=0 (should only get A)
+        final GraphStorage.GraphSubgraph result = graphStorage.traverseBFS(projectId1, "A", 0, 0).join();
+        
+        assertNotNull(result, "Result should not be null");
+        assertEquals(1, result.entities().size(), "Should have 1 entity (start only)");
+        assertEquals(0, result.relations().size(), "Should have 0 relations");
+    }
+    
+    /**
+     * Test traverseBFS with non-existent start entity returns empty.
+     */
+    @Test
+    void testTraverseBFSNonExistentStart() {
+        // Create simple graph
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        graphStorage.upsertEntity(projectId1, entityA).join();
+        
+        // Traverse from non-existent entity
+        final GraphStorage.GraphSubgraph result = graphStorage.traverseBFS(projectId1, "NonExistent", 5, 0).join();
+        
+        assertNotNull(result, "Result should not be null");
+        assertTrue(result.entities().isEmpty(), "Should have 0 entities");
+        assertTrue(result.relations().isEmpty(), "Should have 0 relations");
+    }
+    
+    /**
+     * Test traverseBFS with bidirectional relationships.
+     * 
+     * Graph: A -> B, B -> A (bidirectional)
+     * 
+     * Should handle cycles correctly and not loop infinitely.
+     */
+    @Test
+    void testTraverseBFSBidirectionalRelations() {
+        // Create bidirectional graph
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        final Entity entityB = new Entity("B", "Type", "Entity B", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB)).join();
+        
+        final Relation relAB = new Relation("A", "B", "A to B", "related", 1.0, null);
+        final Relation relBA = new Relation("B", "A", "B to A", "related", 1.0, null);
+        
+        graphStorage.upsertRelations(projectId1, List.of(relAB, relBA)).join();
+        
+        // Traverse from A with large depth (should not loop infinitely)
+        final GraphStorage.GraphSubgraph result = graphStorage.traverseBFS(projectId1, "A", 100, 0).join();
+        
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.entities().size(), "Should have 2 entities");
+        // Note: Could have 1 or 2 relations depending on deduplication
+        assertTrue(result.relations().size() >= 1, "Should have at least 1 relation");
+    }
+    
+    /**
+     * Test traverseBFS with complex graph.
+     * 
+     * Graph:
+     *   A -> B -> D
+     *   A -> C -> D
+     *   B -> C
+     * 
+     * Tests that all paths are explored and duplicates are avoided.
+     */
+    @Test
+    void testTraverseBFSComplexGraph() {
+        // Create complex graph with multiple paths
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        final Entity entityB = new Entity("B", "Type", "Entity B", null);
+        final Entity entityC = new Entity("C", "Type", "Entity C", null);
+        final Entity entityD = new Entity("D", "Type", "Entity D", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB, entityC, entityD)).join();
+        
+        final Relation relAB = new Relation("A", "B", "A to B", "related", 1.0, null);
+        final Relation relAC = new Relation("A", "C", "A to C", "related", 1.0, null);
+        final Relation relBD = new Relation("B", "D", "B to D", "related", 1.0, null);
+        final Relation relCD = new Relation("C", "D", "C to D", "related", 1.0, null);
+        final Relation relBC = new Relation("B", "C", "B to C", "related", 1.0, null);
+        
+        graphStorage.upsertRelations(projectId1, List.of(relAB, relAC, relBD, relCD, relBC)).join();
+        
+        // Traverse from A with maxDepth=2 (should get all)
+        final GraphStorage.GraphSubgraph result = graphStorage.traverseBFS(projectId1, "A", 2, 0).join();
+        
+        assertNotNull(result, "Result should not be null");
+        assertEquals(4, result.entities().size(), "Should have 4 entities");
+        assertEquals(5, result.relations().size(), "Should have 5 relations");
+    }
+    
+    /**
+     * Test traverse delegates to traverseBFS.
+     * 
+     * Verifies that the existing traverse() method works correctly
+     * after being refactored to use traverseBFS.
+     */
+    @Test
+    void testTraverseDelegatesToTraverseBFS() {
+        // Create simple graph
+        final Entity entityA = new Entity("A", "Type", "Entity A", null);
+        final Entity entityB = new Entity("B", "Type", "Entity B", null);
+        
+        graphStorage.upsertEntities(projectId1, List.of(entityA, entityB)).join();
+        
+        final Relation relAB = new Relation("A", "B", "A to B", "related", 1.0, null);
+        graphStorage.upsertRelation(projectId1, relAB).join();
+        
+        // Use old traverse() method
+        final GraphStorage.GraphSubgraph result = graphStorage.traverse(projectId1, "A", 1).join();
+        
+        assertNotNull(result, "Result should not be null");
+        assertEquals(2, result.entities().size(), "Should have 2 entities");
+        assertEquals(1, result.relations().size(), "Should have 1 relation");
+    }
 }

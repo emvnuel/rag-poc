@@ -235,6 +235,14 @@ lightrag.extraction.query.context.max-tokens=2000
 - Respects per-type token budgets
 - Balances context diversity
 
+**Accurate Token Counting (jtokkit)**: Uses cl100k_base encoding for GPT-4 compatible token counting
+- Exact token counting instead of character-based approximation
+- Falls back to ~4 chars/token if jtokkit unavailable
+
+**Persistent Keyword Cache**: Two-level caching for keyword extraction results
+- L1: In-memory cache (5 min TTL) for hot queries
+- L2: PostgreSQL extraction_cache table for persistence across restarts
+
 ### Testing Commands
 ```bash
 # Run gleaning extraction tests (9 tests)
@@ -243,15 +251,20 @@ lightrag.extraction.query.context.max-tokens=2000
 # Run query mode enhancement tests (18 tests)
 ./mvnw test -Dtest=QueryModeEnhancementsTest
 
+# Run token counting tests with jtokkit
+./mvnw test -Dtest="*TokenUtil*"
+
 # Run all LightRAG core tests
 ./mvnw test -Dtest="*LightRAG*,Gleaning*,QueryMode*"
 ```
 
 ### Key Components
 - **LightRAGExtractionConfig** (`lightrag/core/LightRAGExtractionConfig.java`): Centralized configuration via `@ConfigMapping`
-- **KeywordExtractor/LLMKeywordExtractor** (`lightrag/query/`): Query keyword extraction
+- **KeywordExtractor/LLMKeywordExtractor** (`lightrag/query/`): Query keyword extraction (in-memory cache)
+- **PersistentKeywordExtractor** (`lightrag/query/PersistentKeywordExtractor.java`): Persistent keyword caching with PostgreSQL
 - **ContextMerger** (`lightrag/query/ContextMerger.java`): Round-robin context merging with token budgets
-- **TokenUtil** (`lightrag/utils/TokenUtil.java`): Token estimation and budget allocation
+- **TokenUtil** (`lightrag/utils/TokenUtil.java`): Token counting with jtokkit (cl100k_base encoding)
+- **LLMDescriptionSummarizer** (`lightrag/core/LLMDescriptionSummarizer.java`): LLM-based description summarization with map-reduce
 - **LocalQueryExecutor** (`lightrag/query/LocalQueryExecutor.java`): Entity-focused retrieval using low-level keywords
 - **GlobalQueryExecutor** (`lightrag/query/GlobalQueryExecutor.java`): Relation-focused retrieval using high-level keywords
 - **HybridQueryExecutor** (`lightrag/query/HybridQueryExecutor.java`): Combined retrieval with round-robin merging
@@ -437,13 +450,179 @@ The system supports multiple strategies for selecting chunks during retrieval.
 - **WeightedChunkSelector** (`lightrag/query/WeightedChunkSelector.java`): Entity-aware weighting
 - **ChunkSelectorFactory** (`lightrag/query/ChunkSelectorFactory.java`): Factory for selection
 
+## Graph Traversal
+
+The system supports BFS (Breadth-First Search) traversal for exploring the knowledge graph.
+
+### Methods
+- **traverse(projectId, startEntity, maxDepth)**: Simple traversal with depth limit
+- **traverseBFS(projectId, startEntity, maxDepth, maxNodes)**: Advanced BFS with node limit
+
+### Usage
+```java
+// Traverse from entity with depth limit
+GraphSubgraph subgraph = graphStorage.traverse(projectId, "Apple Inc.", 2).join();
+
+// Traverse with node limit (prevents memory exhaustion on large graphs)
+GraphSubgraph limited = graphStorage.traverseBFS(projectId, "Apple Inc.", 5, 100).join();
+```
+
+### Key Features
+- Level-by-level BFS traversal ensures breadth-first ordering
+- `maxNodes` parameter prevents memory exhaustion on large graphs
+- Batch neighbor queries per level (more efficient than per-node queries)
+- Proper cycle detection to avoid infinite loops
+- Single database connection reused throughout traversal
+
+### Key Components
+- **GraphStorage.traverseBFS()** (`lightrag/storage/GraphStorage.java`): Interface method
+- **AgeGraphStorage.traverseBFS()** (`lightrag/storage/impl/AgeGraphStorage.java`): PostgreSQL/AGE implementation
+- **InMemoryGraphStorage.traverseBFS()** (`lightrag/storage/impl/InMemoryGraphStorage.java`): In-memory implementation
+
+## SQLite Storage Backend
+
+The system supports SQLite as an alternative storage backend for local development, edge deployment, and portable knowledge bases.
+
+### Configuration
+Configure via `application.properties`:
+```properties
+# Enable SQLite backend (instead of PostgreSQL)
+lightrag.storage.backend=sqlite
+
+# Database file path
+lightrag.storage.sqlite.path=data/rag.db
+
+# Connection pool settings
+lightrag.storage.sqlite.read-pool-size=4
+lightrag.storage.sqlite.busy-timeout=30000
+lightrag.storage.sqlite.wal-mode=true
+
+# Vector settings (shared with PostgreSQL backend)
+lightrag.vector.dimension=768
+lightrag.vector.table.name=vectors
+```
+
+**Note**: Vector configuration (`lightrag.vector.dimension`, `lightrag.vector.table.name`) is now unified across both PostgreSQL and SQLite backends. This allows switching backends without changing vector configuration.
+
+### Configuration Presets
+
+**Local Development (default)**
+```properties
+lightrag.storage.backend=sqlite
+lightrag.storage.sqlite.path=data/rag.db
+lightrag.storage.sqlite.read-pool-size=4
+```
+
+**Edge Deployment (256MB memory limit)**
+```properties
+lightrag.storage.backend=sqlite
+lightrag.storage.sqlite.path=data/rag.db
+lightrag.storage.sqlite.read-pool-size=2
+# Uses smaller cache and disables mmap for low memory
+```
+
+**In-Memory (testing)**
+```properties
+lightrag.storage.backend=sqlite
+lightrag.storage.sqlite.path=:memory:
+```
+
+### Key Features
+
+**Backend Switching**: Switch between PostgreSQL and SQLite via configuration only
+- Set `lightrag.storage.backend=sqlite` or `lightrag.storage.backend=postgresql`
+- All storage interfaces work identically with either backend
+
+**Project Isolation**: Multi-project support with complete isolation
+- All queries filter by `project_id`
+- Foreign key cascade delete when project is removed
+
+**Export/Import**: Portable knowledge base files
+```bash
+# Export project to standalone SQLite file
+GET /sqlite/export/{projectId}
+
+# Import from SQLite file
+POST /sqlite/import
+Content-Type: multipart/form-data
+file=@exported.db
+```
+
+**Edge Deployment Optimizations**:
+- Smaller batch sizes for low memory usage
+- Configurable cache size and mmap settings
+- Connection pooling limits
+
+### Testing Commands
+```bash
+# Run all SQLite unit tests (170+ tests)
+./mvnw test -Dtest="SQLite*"
+
+# Run SQLite integration tests
+./mvnw test -Dtest="SQLite*IT"
+
+# Run project isolation tests
+./mvnw test -Dtest="SQLiteProjectIsolation*"
+
+# Run with SQLite profile
+./mvnw quarkus:dev -Dquarkus.profile=sqlite
+```
+
+### Key Components
+- **SQLiteStorageProvider** (`lightrag/storage/impl/SQLiteStorageProvider.java`): CDI producer for storage beans
+- **SQLiteConnectionManager** (`lightrag/storage/impl/SQLiteConnectionManager.java`): Connection pooling with WAL mode
+- **SQLiteVectorStorage** (`lightrag/storage/impl/SQLiteVectorStorage.java`): Vector similarity search
+- **SQLiteGraphStorage** (`lightrag/storage/impl/SQLiteGraphStorage.java`): Entity/relation storage with BFS traversal
+- **SQLiteExtractionCacheStorage** (`lightrag/storage/impl/SQLiteExtractionCacheStorage.java`): LLM extraction caching
+- **SQLiteKVStorage** (`lightrag/storage/impl/SQLiteKVStorage.java`): Key-value storage
+- **SQLiteDocStatusStorage** (`lightrag/storage/impl/SQLiteDocStatusStorage.java`): Document processing status
+- **SQLiteExportService** (`lightrag/storage/impl/SQLiteExportService.java`): Project export/import
+- **SQLiteSchemaMigrator** (`lightrag/storage/impl/SQLiteSchemaMigrator.java`): Schema version management
+
+### Common Issues & Troubleshooting
+
+**Problem**: "Database is locked" errors
+- **Cause**: Multiple writers or long-running transactions
+- **Fix**: Increase `busy-timeout` (default 30s), ensure WAL mode enabled
+
+**Problem**: Slow vector queries with large datasets
+- **Cause**: Linear scan (no ANN index in SQLite)
+- **Fix**: For >100K vectors, consider PostgreSQL with pgvector HNSW index
+
+**Problem**: Application fails to start with SQLite
+- **Cause**: Missing schema or wrong backend configuration
+- **Fix**: Verify `lightrag.storage.backend=sqlite` is set, check database file permissions
+
+**Problem**: Project data not isolated
+- **Cause**: Should not happen - all queries filter by project_id
+- **Fix**: Report as bug if cross-project data leakage occurs
+
+### Database Schema
+
+The SQLite schema mirrors PostgreSQL with these tables:
+- `projects` - Project metadata
+- `documents` - Document metadata with FK to projects
+- `vectors` - Vector embeddings with FK to projects/documents
+- `graph_entities` - Knowledge graph entities with FK to projects
+- `graph_relations` - Knowledge graph relations with FK to projects
+- `extraction_cache` - LLM extraction cache with FK to projects
+- `kv_store` - General key-value storage
+- `document_status` - Document processing status
+- `schema_version` - Migration tracking
+
+All project-related tables have `ON DELETE CASCADE` for automatic cleanup.
+
 ## Active Technologies
 - Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector (004-retry-backoff)
 - `AgeGraphStorage.java` for graph ops, `PgVectorStorage.java` for vector ops (004-retry-backoff)
 - PostgreSQL 14+ with Apache AGE and pgvector extensions (006-lightrag-official-impl)
 - Apache POI for Excel export (007-lightrag-enhancements)
+- JTokkit 1.1.0 for accurate GPT-compatible token counting (cl100k_base encoding)
+- SQLite with sqlite-jdbc for portable/edge deployments (009-sqlite-storage-port)
 
 ## Recent Changes
 - 007-lightrag-enhancements: Added reranker integration (Cohere/Jina), document deletion with KG rebuild, entity merge operations, KG export (CSV/Excel/Markdown/Text), token usage tracking, chunk selection strategies
 - 006-lightrag-official-impl: Added gleaning extraction, keyword extraction, context merging, token budgets, entity normalization
 - 004-retry-backoff: Added Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector
+- Added jtokkit for accurate token counting (replaces character-based approximation)
+- Added PersistentKeywordExtractor with two-level caching (L1 in-memory + L2 PostgreSQL)

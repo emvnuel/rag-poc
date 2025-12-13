@@ -256,6 +256,16 @@ public class InMemoryGraphStorage implements GraphStorage {
     
     @Override
     public CompletableFuture<GraphSubgraph> traverse(@NotNull String projectId, @NotNull String startEntity, int maxDepth) {
+        // Delegate to BFS traversal with unlimited nodes (0 = no limit)
+        return traverseBFS(projectId, startEntity, maxDepth, 0);
+    }
+    
+    @Override
+    public CompletableFuture<GraphSubgraph> traverseBFS(
+            @NotNull String projectId, 
+            @NotNull String startEntity, 
+            int maxDepth, 
+            int maxNodes) {
         ensureInitialized();
         return CompletableFuture.supplyAsync(() -> {
             Set<String> visitedEntities = new HashSet<>();
@@ -263,11 +273,18 @@ public class InMemoryGraphStorage implements GraphStorage {
             Queue<String> queue = new LinkedList<>();
             Map<String, Integer> depths = new HashMap<>();
             
+            final int effectiveMaxNodes = maxNodes > 0 ? maxNodes : Integer.MAX_VALUE;
+            
             queue.add(startEntity);
             depths.put(startEntity, 0);
             visitedEntities.add(startEntity);
             
             while (!queue.isEmpty()) {
+                // Check node limit
+                if (visitedEntities.size() >= effectiveMaxNodes) {
+                    break;
+                }
+                
                 String currentEntity = queue.poll();
                 int currentDepth = depths.get(currentEntity);
                 
@@ -285,6 +302,9 @@ public class InMemoryGraphStorage implements GraphStorage {
                         visitedRelations.add(relation);
                         
                         if (!visitedEntities.contains(neighbor)) {
+                            if (visitedEntities.size() >= effectiveMaxNodes) {
+                                break;
+                            }
                             visitedEntities.add(neighbor);
                             queue.add(neighbor);
                             depths.put(neighbor, currentDepth + 1);
@@ -302,6 +322,9 @@ public class InMemoryGraphStorage implements GraphStorage {
                         visitedRelations.add(relation);
                         
                         if (!visitedEntities.contains(neighbor)) {
+                            if (visitedEntities.size() >= effectiveMaxNodes) {
+                                break;
+                            }
                             visitedEntities.add(neighbor);
                             queue.add(neighbor);
                             depths.put(neighbor, currentDepth + 1);
@@ -317,6 +340,9 @@ public class InMemoryGraphStorage implements GraphStorage {
                 .toList();
             
             List<Relation> resultRelations = new ArrayList<>(visitedRelations);
+            
+            logger.debug("BFS traversed from entity {} (maxDepth={}, maxNodes={}) for project {}: {} entities, {} relations",
+                startEntity, maxDepth, maxNodes, projectId, resultEntities.size(), resultRelations.size());
             
             return new GraphSubgraph(resultEntities, resultRelations);
         });
@@ -595,6 +621,69 @@ public class InMemoryGraphStorage implements GraphStorage {
                 entities.put(entityName, updated);
                 logger.debug("Updated entity description for '{}' in project: {}", entityName, projectId);
             }
+        });
+    }
+    
+    // ===== Batch Operations for Performance =====
+    
+    @Override
+    public CompletableFuture<Map<String, Integer>> getNodeDegreesBatch(
+            @NotNull String projectId, 
+            @NotNull List<String> entityNames, 
+            int batchSize) {
+        ensureInitialized();
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            Map<String, Integer> degreeMap = new HashMap<>();
+            
+            for (String entityName : entityNames) {
+                int degree = 0;
+                
+                // Count outgoing edges
+                ConcurrentHashMap<String, Relation> outgoing = outgoingEdges.get(entityName);
+                if (outgoing != null) {
+                    degree += outgoing.size();
+                }
+                
+                // Count incoming edges
+                ConcurrentHashMap<String, Relation> incoming = incomingEdges.get(entityName);
+                if (incoming != null) {
+                    degree += incoming.size();
+                }
+                
+                degreeMap.put(entityName, degree);
+            }
+            
+            logger.debug("Retrieved degrees for {} entities for project: {}", degreeMap.size(), projectId);
+            return degreeMap;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<Map<String, Entity>> getEntitiesMapBatch(
+            @NotNull String projectId, 
+            @NotNull List<String> entityNames, 
+            int batchSize) {
+        ensureInitialized();
+        if (entityNames == null || entityNames.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        
+        return CompletableFuture.supplyAsync(() -> {
+            Map<String, Entity> entityMap = new HashMap<>();
+            
+            for (String entityName : entityNames) {
+                Entity entity = entities.get(entityName);
+                if (entity != null) {
+                    entityMap.put(entityName, entity);
+                }
+            }
+            
+            logger.debug("Retrieved {} entities in batch for project: {}", entityMap.size(), projectId);
+            return entityMap;
         });
     }
     

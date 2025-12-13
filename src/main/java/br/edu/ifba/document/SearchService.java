@@ -25,7 +25,7 @@ public class SearchService {
     LightRAGService lightragService;
 
     @Inject
-    DocumentRepository documentRepository;
+    DocumentRepositoryPort documentRepository;
 
     @ConfigProperty(name = "lightrag.query.mode", defaultValue = "LOCAL")
     String queryMode;
@@ -115,7 +115,7 @@ public class SearchService {
                 LOG.debugf("Loading filenames for %d documents", documentIds.size());
                 for (UUID docId : documentIds) {
                     try {
-                        Document doc = documentRepository.findById(docId);
+                        Document doc = documentRepository.findDocumentById(docId).orElse(null);
                         if (doc != null) {
                             documentFileNames.put(docId, doc.getFileName());
                         } else {

@@ -5,7 +5,7 @@ import br.edu.ifba.chat.LlmChatClient;
 import br.edu.ifba.chat.LlmChatRequest;
 import br.edu.ifba.chat.LlmChatResponse;
 import br.edu.ifba.document.Document;
-import br.edu.ifba.document.DocumentService;
+import br.edu.ifba.document.DocumentServicePort;
 import br.edu.ifba.document.DocumentType;
 import br.edu.ifba.document.EmbeddingRequest;
 import br.edu.ifba.document.EmbeddingResponse;
@@ -14,7 +14,7 @@ import br.edu.ifba.lightrag.core.DeduplicationConfig;
 import br.edu.ifba.lightrag.core.Entity;
 import br.edu.ifba.lightrag.storage.impl.AgeGraphStorage;
 import br.edu.ifba.project.Project;
-import br.edu.ifba.project.ProjectService;
+import br.edu.ifba.project.ProjectServicePort;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -59,10 +59,10 @@ class SemanticDeduplicationE2EIT {
     AgeGraphStorage graphStorage;
 
     @Inject
-    ProjectService projectService;
+    ProjectServicePort projectService;
 
     @Inject
-    DocumentService documentService;
+    DocumentServicePort documentService;
 
     @Inject
     DeduplicationConfig deduplicationConfig;

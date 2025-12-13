@@ -4,6 +4,7 @@ import br.edu.ifba.lightrag.storage.VectorStorage;
 import br.edu.ifba.lightrag.utils.TransientSQLExceptionPredicate;
 import io.smallrye.faulttolerance.api.ExponentialBackoff;
 import io.smallrye.faulttolerance.api.RetryWhen;
+import io.quarkus.arc.properties.IfBuildProperty;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -34,6 +35,7 @@ import java.util.concurrent.Executors;
  * 3. Table will be created automatically on initialize()
  */
 @ApplicationScoped
+@IfBuildProperty(name = "lightrag.storage.backend", stringValue = "postgresql", enableIfMissing = true)
 public class PgVectorStorage implements VectorStorage {
     
     private static final Logger logger = LoggerFactory.getLogger(PgVectorStorage.class);
@@ -44,8 +46,22 @@ public class PgVectorStorage implements VectorStorage {
     @ConfigProperty(name = "lightrag.vector.table.name", defaultValue = "lightrag_vectors")
     String tableName;
     
-    @ConfigProperty(name = "lightrag.vector.dimension", defaultValue = "384")
+    @ConfigProperty(name = "lightrag.vector.dimension", defaultValue = "768")
     int dimension;
+    
+    // HNSW index configuration (aligned with official LightRAG Python implementation)
+    @ConfigProperty(name = "lightrag.vector.index.type", defaultValue = "hnsw")
+    String indexType;
+    
+    @ConfigProperty(name = "lightrag.vector.index.hnsw.m", defaultValue = "16")
+    int hnswM;
+    
+    @ConfigProperty(name = "lightrag.vector.index.hnsw.ef-construction", defaultValue = "64")
+    int hnswEfConstruction;
+    
+    // IVFFLAT index configuration (alternative for larger datasets)
+    @ConfigProperty(name = "lightrag.vector.index.ivfflat.lists", defaultValue = "100")
+    int ivfflatLists;
     
     private final ExecutorService executor;
     
@@ -86,70 +102,88 @@ public class PgVectorStorage implements VectorStorage {
                 stmt.execute(createTableSql);
                 
                 // Add foreign key constraints for document_id and project_id
-                // Note: Using rag schema for application tables (documents, projects, lightrag_vectors)
+                // Note: Using rag schema for application tables (documents, projects, vectors)
                 // ag_catalog is only used by Apache AGE for graph metadata (ag_graph, ag_label)
                 // This is done separately so initialization doesn't fail if tables don't exist yet
                 
                 // Add document_id foreign key with CASCADE delete
+                String documentFkName = "fk_" + tableName + "_document";
                 try {
                     String addDocumentFkSql = String.format("""
                         DO $$
                         BEGIN
                             IF NOT EXISTS (
                                 SELECT 1 FROM pg_constraint 
-                                WHERE conname = 'fk_lightrag_vectors_document'
-                                AND conrelid = 'rag.lightrag_vectors'::regclass
+                                WHERE conname = '%s'
+                                AND conrelid = 'rag.%s'::regclass
                             ) THEN
                                 ALTER TABLE rag.%s 
-                                ADD CONSTRAINT fk_lightrag_vectors_document 
+                                ADD CONSTRAINT %s 
                                 FOREIGN KEY (document_id) REFERENCES rag.documents(id) ON DELETE CASCADE;
                             END IF;
                         END
                         $$;
-                        """, tableName);
+                        """, documentFkName, tableName, tableName, documentFkName);
                     stmt.execute(addDocumentFkSql);
-                    logger.debug("Foreign key constraint fk_lightrag_vectors_document added to {}", tableName);
+                    logger.debug("Foreign key constraint {} added to {}", documentFkName, tableName);
                 } catch (SQLException e) {
                     logger.warn("Could not add document_id foreign key constraint (document table may not exist yet): {}", e.getMessage());
                 }
                 
                 // Add project_id foreign key with CASCADE delete
+                String projectFkName = "fk_" + tableName + "_project";
                 try {
                     String addProjectFkSql = String.format("""
                         DO $$
                         BEGIN
                             IF NOT EXISTS (
                                 SELECT 1 FROM pg_constraint 
-                                WHERE conname = 'fk_lightrag_vectors_project'
-                                AND conrelid = 'rag.lightrag_vectors'::regclass
+                                WHERE conname = '%s'
+                                AND conrelid = 'rag.%s'::regclass
                             ) THEN
                                 ALTER TABLE rag.%s 
-                                ADD CONSTRAINT fk_lightrag_vectors_project 
+                                ADD CONSTRAINT %s 
                                 FOREIGN KEY (project_id) REFERENCES rag.projects(id) ON DELETE CASCADE;
                             END IF;
                         END
                         $$;
-                        """, tableName);
+                        """, projectFkName, tableName, tableName, projectFkName);
                     stmt.execute(addProjectFkSql);
-                    logger.debug("Foreign key constraint fk_lightrag_vectors_project added to {}", tableName);
+                    logger.debug("Foreign key constraint {} added to {}", projectFkName, tableName);
                 } catch (SQLException e) {
                     logger.warn("Could not add project_id foreign key constraint (project table may not exist yet): {}", e.getMessage());
                 }
                 
-                // Create index for vector similarity search (using HNSW for better performance)
+                // Create index for vector similarity search
                 // Using halfvec_cosine_ops for halfvec type (cosine distance)
-                String createIndexSql = String.format(
-                    "CREATE INDEX IF NOT EXISTS %s_vector_idx ON rag.%s USING hnsw (vector halfvec_cosine_ops)",
-                    tableName, tableName
-                );
-                stmt.execute(createIndexSql);
+                // Supports HNSW (default) or IVFFLAT index types with configurable parameters
+                String createIndexSql;
+                if ("ivfflat".equalsIgnoreCase(indexType)) {
+                    // IVFFLAT: Better for larger datasets with less memory
+                    // lists: number of clusters (sqrt(n) to n/1000 recommended)
+                    createIndexSql = String.format(
+                        "CREATE INDEX IF NOT EXISTS %s_vector_idx ON rag.%s USING ivfflat (vector halfvec_cosine_ops) WITH (lists = %d)",
+                        tableName, tableName, ivfflatLists
+                    );
+                    logger.info("Creating IVFFLAT index with lists={}", ivfflatLists);
+                } else {
+                    // HNSW: Better recall/performance, more memory
+                    // m: max connections per node (default 16)
+                    // ef_construction: build-time search width (default 64)
+                    createIndexSql = String.format(
+                        "CREATE INDEX IF NOT EXISTS %s_vector_idx ON rag.%s USING hnsw (vector halfvec_cosine_ops) WITH (m = %d, ef_construction = %d)",
+                        tableName, tableName, hnswM, hnswEfConstruction
+                    );
+                    logger.info("Creating HNSW index with m={}, ef_construction={}", hnswM, hnswEfConstruction);
+                }
+                executeIndexCreation(stmt, createIndexSql, tableName + "_vector_idx");
                 
                 // Create index on type for filtered queries
                 String createTypeIndexSql = String.format(
                     "CREATE INDEX IF NOT EXISTS %s_type_idx ON rag.%s (type)",
                     tableName, tableName
                 );
-                stmt.execute(createTypeIndexSql);
+                executeIndexCreation(stmt, createTypeIndexSql, tableName + "_type_idx");
                 
                 logger.info("PgVector storage initialized successfully for table: {}", tableName);
                 
@@ -158,6 +192,29 @@ public class PgVectorStorage implements VectorStorage {
                 throw new RuntimeException("Failed to initialize pgvector storage", e);
             }
         }, executor);
+    }
+    
+    /**
+     * Executes index creation with handling for concurrent duplicate creation.
+     * PostgreSQL's CREATE INDEX IF NOT EXISTS can still fail with duplicate key errors
+     * in concurrent scenarios due to a race condition in the catalog update.
+     * 
+     * @param stmt the statement to execute on
+     * @param sql the CREATE INDEX SQL
+     * @param indexName the index name for logging
+     */
+    private void executeIndexCreation(Statement stmt, String sql, String indexName) throws SQLException {
+        try {
+            stmt.execute(sql);
+        } catch (SQLException e) {
+            // SQLSTATE 23505 = unique_violation (duplicate key)
+            // This can happen with concurrent CREATE INDEX IF NOT EXISTS due to race condition
+            if ("23505".equals(e.getSQLState())) {
+                logger.debug("Index {} already exists (concurrent creation), ignoring", indexName);
+            } else {
+                throw e;
+            }
+        }
     }
     
     @Override
