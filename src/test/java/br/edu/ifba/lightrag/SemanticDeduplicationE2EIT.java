@@ -12,7 +12,7 @@ import br.edu.ifba.document.EmbeddingResponse;
 import br.edu.ifba.document.LlmEmbeddingClient;
 import br.edu.ifba.lightrag.core.DeduplicationConfig;
 import br.edu.ifba.lightrag.core.Entity;
-import br.edu.ifba.lightrag.storage.impl.AgeGraphStorage;
+import br.edu.ifba.lightrag.storage.GraphStorage;
 import br.edu.ifba.project.Project;
 import br.edu.ifba.project.ProjectServicePort;
 import io.quarkus.test.InjectMock;
@@ -56,7 +56,7 @@ class SemanticDeduplicationE2EIT {
     LightRAGService lightRAGService;
 
     @Inject
-    AgeGraphStorage graphStorage;
+    GraphStorage graphStorage;
 
     @Inject
     ProjectServicePort projectService;
@@ -199,7 +199,8 @@ class SemanticDeduplicationE2EIT {
             testDocumentId,
             documentContent,
             "test-warren-home.txt",
-            testProjectId
+            testProjectId,
+            br.edu.ifba.document.DocumentType.TEXT
         );
 
         String lightragDocId = insertFuture.get(60, TimeUnit.SECONDS);
@@ -301,7 +302,8 @@ class SemanticDeduplicationE2EIT {
             testDocumentId,
             documentContent,
             "test-warren-query.txt",
-            testProjectId
+            testProjectId,
+            br.edu.ifba.document.DocumentType.TEXT
         ).get(60, TimeUnit.SECONDS);
 
         Thread.sleep(3000);
@@ -412,7 +414,8 @@ class SemanticDeduplicationE2EIT {
             testDocumentId,
             documentContent,
             "test-apple-types.txt",
-            testProjectId
+            testProjectId,
+            br.edu.ifba.document.DocumentType.TEXT
         ).get(60, TimeUnit.SECONDS);
 
         Thread.sleep(3000);
@@ -488,7 +491,8 @@ class SemanticDeduplicationE2EIT {
             testDocumentId,
             documentContent,
             "test-dedup-enabled.txt",
-            testProjectId
+            testProjectId,
+            br.edu.ifba.document.DocumentType.TEXT
         ).get(60, TimeUnit.SECONDS);
 
         Thread.sleep(3000);
