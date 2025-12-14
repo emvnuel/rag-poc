@@ -82,8 +82,8 @@ public class DocumentProcessorJob {
                 return;
             }
 
-            LOG.infof("Processing document %s through LightRAG - fileName: %s, projectId: %s", 
-                    documentId, document.getFileName(), document.getProject().getId());
+            LOG.infof("Processing document %s through LightRAG - fileName: %s, projectId: %s, type: %s", 
+                    documentId, document.getFileName(), document.getProject().getId(), document.getType());
             
             // Insert document into LightRAG knowledge graph asynchronously
             // This will handle chunking, entity extraction, and graph construction
@@ -92,7 +92,8 @@ public class DocumentProcessorJob {
                     documentId, 
                     document.getContent(), 
                     document.getFileName(), 
-                    document.getProject().getId()
+                    document.getProject().getId(),
+                    document.getType()
             ).thenAccept(result -> {
                 LOG.infof("Successfully processed document %s through LightRAG", documentId);
                 markAsProcessed(documentId);

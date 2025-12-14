@@ -56,6 +56,9 @@ public class LightRAG {
     // Reranker (optional)
     private final Reranker reranker;
     
+    // Code chunker (optional, for code-specific chunking)
+    private final br.edu.ifba.document.CodeChunker codeChunker;
+    
     // System prompts for query modes
     private final String localSystemPrompt;
     private final String globalSystemPrompt;
@@ -69,6 +72,8 @@ public class LightRAG {
     
     // Entity extraction configuration
     private final String entityTypes;
+    private final String codeEntityTypes;
+    private final String codeRelationshipTypes;
     private final String extractionLanguage;
     private final String entityExtractionUserPrompt;
     
@@ -118,12 +123,15 @@ public class LightRAG {
         private String bypassSystemPrompt;
         private String entityExtractionSystemPrompt;
         private String entityTypes;
+        private String codeEntityTypes;
+        private String codeRelationshipTypes;
         private String extractionLanguage;
         private String entityExtractionUserPrompt;
         private EntityResolver entityResolver;
         private DeduplicationConfig deduplicationConfig;
         private LightRAGExtractionConfig extractionConfig;
         private Reranker reranker;
+        private br.edu.ifba.document.CodeChunker codeChunker;
         
         public Builder config(@NotNull LightRAGConfig config) {
             this.config = config;
@@ -210,6 +218,16 @@ public class LightRAG {
             return this;
         }
         
+        public Builder codeEntityTypes(@NotNull String codeEntityTypes) {
+            this.codeEntityTypes = codeEntityTypes;
+            return this;
+        }
+        
+        public Builder codeRelationshipTypes(@NotNull String codeRelationshipTypes) {
+            this.codeRelationshipTypes = codeRelationshipTypes;
+            return this;
+        }
+        
         public Builder extractionLanguage(@NotNull String extractionLanguage) {
             this.extractionLanguage = extractionLanguage;
             return this;
@@ -237,6 +255,11 @@ public class LightRAG {
         
         public Builder reranker(@Nullable Reranker reranker) {
             this.reranker = reranker;
+            return this;
+        }
+        
+        public Builder codeChunker(@Nullable br.edu.ifba.document.CodeChunker codeChunker) {
+            this.codeChunker = codeChunker;
             return this;
         }
         
@@ -314,12 +337,15 @@ public class LightRAG {
                 bypassSystemPrompt,
                 entityExtractionSystemPrompt,
                 entityTypes,
+                codeEntityTypes,
+                codeRelationshipTypes,
                 extractionLanguage,
                 entityExtractionUserPrompt,
                 entityResolver,
                 deduplicationConfig,
                 extractionConfig,
-                reranker
+                reranker,
+                codeChunker
             );
         }
     }
@@ -345,12 +371,15 @@ public class LightRAG {
         @NotNull String bypassSystemPrompt,
         @NotNull String entityExtractionSystemPrompt,
         @NotNull String entityTypes,
+        @Nullable String codeEntityTypes,
+        @Nullable String codeRelationshipTypes,
         @NotNull String extractionLanguage,
         @NotNull String entityExtractionUserPrompt,
         @Nullable EntityResolver entityResolver,
         @Nullable DeduplicationConfig deduplicationConfig,
         @Nullable LightRAGExtractionConfig extractionConfig,
-        @Nullable Reranker reranker
+        @Nullable Reranker reranker,
+        @Nullable br.edu.ifba.document.CodeChunker codeChunker
     ) {
         this.config = config;
         this.llmFunction = llmFunction;
@@ -365,6 +394,7 @@ public class LightRAG {
         this.deduplicationConfig = deduplicationConfig;
         this.extractionConfig = extractionConfig;
         this.reranker = reranker;
+        this.codeChunker = codeChunker;
         this.localSystemPrompt = localSystemPrompt;
         this.globalSystemPrompt = globalSystemPrompt;
         this.hybridSystemPrompt = hybridSystemPrompt;
@@ -373,6 +403,8 @@ public class LightRAG {
         this.bypassSystemPrompt = bypassSystemPrompt;
         this.entityExtractionSystemPrompt = entityExtractionSystemPrompt;
         this.entityTypes = entityTypes;
+        this.codeEntityTypes = codeEntityTypes;
+        this.codeRelationshipTypes = codeRelationshipTypes;
         this.extractionLanguage = extractionLanguage;
         this.entityExtractionUserPrompt = entityExtractionUserPrompt;
     }
@@ -632,14 +664,42 @@ public class LightRAG {
         @NotNull String content,
         @Nullable Map<String, Object> metadata
     ) {
-        // Step 1: Chunk the document
-        List<String> chunks = TokenUtil.chunkText(
-            content,
-            config.chunkSize(),
-            config.chunkOverlap()
-        );
+        // Step 1: Chunk the document (use CodeChunker for CODE documents)
+        List<String> chunks;
+        String documentType = metadata != null ? (String) metadata.get("document_type") : null;
+        boolean isCodeDocument = "CODE".equals(documentType);
         
-        logger.info("Document {} chunked into {} pieces", docId, chunks.size());
+        logger.info("LightRAG.processDocument - docId: {}, document_type from metadata: {}, isCodeDocument: {}", 
+                docId, documentType, isCodeDocument);
+        
+        if (isCodeDocument && codeChunker != null) {
+            // Use code-aware chunking
+            String fileName = metadata != null ? (String) metadata.get("filepath") : "unknown.txt";
+            logger.debug("Using code-aware chunking for document {} (fileName: {})", docId, fileName);
+            
+            List<br.edu.ifba.document.CodeChunker.CodeChunk> codeChunks = codeChunker.chunk(
+                content,
+                fileName,
+                config.chunkSize(),
+                config.chunkOverlap()
+            );
+            
+            // Extract just the content from CodeChunks
+            chunks = codeChunks.stream()
+                .map(br.edu.ifba.document.CodeChunker.CodeChunk::content)
+                .toList();
+            
+            logger.info("Document {} code-chunked into {} pieces", docId, chunks.size());
+        } else {
+            // Use default token-based chunking
+            chunks = TokenUtil.chunkText(
+                content,
+                config.chunkSize(),
+                config.chunkOverlap()
+            );
+            
+            logger.info("Document {} chunked into {} pieces", docId, chunks.size());
+        }
         
         // Step 2: Store chunks in KV storage
         List<String> chunkIds = new ArrayList<>();
@@ -767,7 +827,7 @@ public class LightRAG {
                 for (int i = 0; i < batchChunks.size(); i++) {
                     String chunkId = UuidUtils.randomV7().toString();
                     String chunkContent = batchChunks.get(i);
-                    batchFutures.add(extractKnowledgeGraphFromChunk(chunkId, chunkContent));
+                    batchFutures.add(extractKnowledgeGraphFromChunk(chunkId, chunkContent, metadata));
                 }
                 
                 // Wait for this batch to complete before moving to next batch
@@ -826,6 +886,41 @@ public class LightRAG {
     private record KGExtractionChunkResult(List<Entity> entities, List<Relation> relations) {}
     
     /**
+     * Detects programming language from file name extension.
+     * 
+     * @param fileName the file name
+     * @return detected language or "unknown"
+     */
+    private String detectLanguageFromFileName(@NotNull String fileName) {
+        int lastDot = fileName.lastIndexOf('.');
+        if (lastDot < 0 || lastDot == fileName.length() - 1) {
+            return "unknown";
+        }
+        
+        String extension = fileName.substring(lastDot + 1).toLowerCase();
+        
+        return switch (extension) {
+            case "java" -> "Java";
+            case "py" -> "Python";
+            case "js", "mjs", "cjs" -> "JavaScript";
+            case "ts" -> "TypeScript";
+            case "go" -> "Go";
+            case "rs" -> "Rust";
+            case "c" -> "C";
+            case "cpp", "cc", "cxx" -> "C++";
+            case "cs" -> "C#";
+            case "rb" -> "Ruby";
+            case "php" -> "PHP";
+            case "swift" -> "Swift";
+            case "kt", "kts" -> "Kotlin";
+            case "scala" -> "Scala";
+            case "sh", "bash" -> "Shell";
+            case "sql" -> "SQL";
+            default -> "unknown";
+        };
+    }
+    
+    /**
      * Extracts entities and relations from a single chunk using LLM.
      * 
      * <p>This method implements iterative gleaning (T006) per official LightRAG:
@@ -838,17 +933,56 @@ public class LightRAG {
      * 
      * @param chunkId unique identifier for the chunk
      * @param chunkContent the text content to extract from
+     * @param metadata document metadata (including document_type for code vs text detection)
      * @return combined extraction results from all passes
      */
     private CompletableFuture<KGExtractionChunkResult> extractKnowledgeGraphFromChunk(
         @NotNull String chunkId,
-        @NotNull String chunkContent
+        @NotNull String chunkContent,
+        @Nullable Map<String, Object> metadata
     ) {
-        // Fill placeholders in the system prompt template
-        String filledSystemPrompt = fillEntityExtractionPromptTemplate(chunkContent);
+        // Determine if this is a code document
+        String documentType = metadata != null ? (String) metadata.get("document_type") : null;
+        boolean isCodeDocument = "CODE".equals(documentType);
         
-        // Use configured user prompt from .env
-        String userPrompt = entityExtractionUserPrompt;
+        logger.info("Extracting KG from chunk {} - documentType: {}, isCodeDocument: {}", chunkId, documentType, isCodeDocument);
+        
+        // Fill placeholders in the system prompt template (use code prompts for code documents)
+        String filledSystemPrompt;
+        String userPrompt;
+        
+        if (isCodeDocument) {
+            // Use code-specific prompts
+            String fileName = metadata != null ? (String) metadata.get("filepath") : "unknown";
+            String detectedLanguage = detectLanguageFromFileName(fileName);
+            
+            // Use configured code entity types, or fall back to defaults
+            String effectiveCodeEntityTypes = (codeEntityTypes != null && !codeEntityTypes.isEmpty()) 
+                ? codeEntityTypes 
+                : br.edu.ifba.lightrag.core.CodeExtractionPrompts.DEFAULT_CODE_ENTITY_TYPES;
+            
+            String effectiveCodeRelationshipTypes = (codeRelationshipTypes != null && !codeRelationshipTypes.isEmpty())
+                ? codeRelationshipTypes
+                : br.edu.ifba.lightrag.core.CodeExtractionPrompts.DEFAULT_CODE_RELATIONSHIP_TYPES;
+            
+            logger.info("CODE EXTRACTION - chunk: {}, language: {}, entityTypes configured: {}, relationshipTypes configured: {}, entity count: {}, relationship count: {}", 
+                chunkId, detectedLanguage, 
+                (codeEntityTypes != null && !codeEntityTypes.isEmpty()), 
+                (codeRelationshipTypes != null && !codeRelationshipTypes.isEmpty()),
+                effectiveCodeEntityTypes.split(",").length, 
+                effectiveCodeRelationshipTypes.split(",").length);
+            
+            filledSystemPrompt = br.edu.ifba.lightrag.core.CodeExtractionPrompts.formatSystemPrompt(
+                effectiveCodeEntityTypes,
+                effectiveCodeRelationshipTypes,
+                detectedLanguage
+            );
+            userPrompt = br.edu.ifba.lightrag.core.CodeExtractionPrompts.formatUserPrompt(chunkContent);
+        } else {
+            // Use default text extraction prompts
+            filledSystemPrompt = fillEntityExtractionPromptTemplate(chunkContent);
+            userPrompt = entityExtractionUserPrompt;
+        }
         
         // Initial extraction pass
         return llmFunction.apply(userPrompt, filledSystemPrompt)
@@ -1150,6 +1284,14 @@ public class LightRAG {
             List<Entity> entities = new ArrayList<>();
             List<Relation> relations = new ArrayList<>();
             
+            // Step 0: Try JSON parsing first (for CODE extraction responses)
+            KGExtractionChunkResult jsonResult = tryParseAsJSON(response, chunkId);
+            if (jsonResult != null) {
+                logger.debug("Successfully parsed JSON response for chunk {}: {} entities, {} relations", 
+                    chunkId, jsonResult.entities().size(), jsonResult.relations().size());
+                return jsonResult;
+            }
+            
             // Step 1: Fix delimiter corruption in the response (ported from Python fix_tuple_delimiter_corruption)
             String fixedResponse = fixTupleDelimiterCorruption(response);
             
@@ -1203,6 +1345,77 @@ public class LightRAG {
         } catch (Exception e) {
             logger.warn("Failed to parse KG extraction response for chunk {}: {}", chunkId, e.getMessage());
             return new KGExtractionChunkResult(List.of(), List.of());
+        }
+    }
+    
+    /**
+     * Attempts to parse the LLM response as JSON (used for CODE extraction).
+     * Handles markdown code blocks (```json...```).
+     * 
+     * @param response the raw LLM response
+     * @param chunkId the chunk ID for entity metadata
+     * @return parsed result, or null if not valid JSON
+     */
+    private KGExtractionChunkResult tryParseAsJSON(String response, String chunkId) {
+        try {
+            // Strip markdown code blocks if present
+            String jsonStr = response.trim();
+            if (jsonStr.startsWith("```json")) {
+                jsonStr = jsonStr.substring(7); // Remove ```json
+            } else if (jsonStr.startsWith("```")) {
+                jsonStr = jsonStr.substring(3); // Remove ```
+            }
+            if (jsonStr.endsWith("```")) {
+                jsonStr = jsonStr.substring(0, jsonStr.length() - 3);
+            }
+            jsonStr = jsonStr.trim();
+            
+            // Check if it looks like JSON
+            if (!jsonStr.startsWith("{") || !jsonStr.endsWith("}")) {
+                return null;
+            }
+            
+            // Parse JSON using Jackson
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(jsonStr);
+            
+            List<Entity> entities = new ArrayList<>();
+            List<Relation> relations = new ArrayList<>();
+            
+            // Parse entities array
+            if (root.has("entities") && root.get("entities").isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode entityNode : root.get("entities")) {
+                    String name = entityNode.has("name") ? entityNode.get("name").asText() : null;
+                    String type = entityNode.has("type") ? entityNode.get("type").asText() : null;
+                    String description = entityNode.has("description") ? entityNode.get("description").asText() : "";
+                    
+                    if (name != null && type != null && !name.isEmpty() && !type.isEmpty()) {
+                        entities.add(new Entity(name, type, description, chunkId));
+                    }
+                }
+            }
+            
+            // Parse relationships array
+            if (root.has("relationships") && root.get("relationships").isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode relNode : root.get("relationships")) {
+                    String source = relNode.has("source") ? relNode.get("source").asText() : null;
+                    String target = relNode.has("target") ? relNode.get("target").asText() : null;
+                    String type = relNode.has("type") ? relNode.get("type").asText() : null;
+                    String description = relNode.has("description") ? relNode.get("description").asText() : "";
+                    
+                    if (source != null && target != null && type != null && 
+                        !source.isEmpty() && !target.isEmpty() && !type.isEmpty()) {
+                        // Use type as keywords, weight 1.0, no filePath, no documentId, sourceChunkIds with chunkId
+                        relations.add(new Relation(source, target, description, type, 1.0, null, null, List.of(chunkId)));
+                    }
+                }
+            }
+            
+            return new KGExtractionChunkResult(entities, relations);
+            
+        } catch (Exception e) {
+            // Not JSON or parse failed - return null to try tuple delimiter parsing
+            return null;
         }
     }
     

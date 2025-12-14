@@ -66,8 +66,13 @@ public class DocumentResources {
             final String formattedText = TextFormatter.format(text);
             final String metadata = FileMetadataExtractor.extractMetadata(file, contentMetadata);
 
+            // Determine document type based on extractor
+            final DocumentType documentType = (extractor instanceof CodeDocumentExtractor) 
+                ? DocumentType.CODE 
+                : DocumentType.FILE;
+
             final var project = projectService.findById(projectId);
-            final Document document = new Document(DocumentType.FILE, fileName, formattedText, metadata, project);
+            final Document document = new Document(documentType, fileName, formattedText, metadata, project);
             final Document created = documentService.create(document);
 
             return Response.created(URI.create("/documents/" + created.getId()))
@@ -87,7 +92,12 @@ public class DocumentResources {
         final String formattedText = TextFormatter.format(request.text());
 
         final var project = projectService.findById(request.projectId());
-        final Document document = new Document(DocumentType.TEXT, "text-input", formattedText, null, project);
+        
+        // Use documentType from request, default to TEXT if not specified
+        final DocumentType docType = request.documentType() != null ? request.documentType() : DocumentType.TEXT;
+        final String fileName = request.filename() != null ? request.filename() : "text-input";
+        
+        final Document document = new Document(docType, fileName, formattedText, null, project);
         final Document created = documentService.create(document);
 
         return Response.created(URI.create("/documents/" + created.getId()))
@@ -168,6 +178,89 @@ public class DocumentResources {
     public String getContent(@PathParam("id") final UUID id) {
         final Document document = documentService.findById(id);
         return document.getContent();
+    }
+
+    @Inject
+    GitRepositoryService gitRepositoryService;
+
+    /**
+     * Ingests a Git repository by cloning it and processing all code/text files.
+     * Automatically detects and includes code files from 50+ programming languages.
+     *
+     * @param projectId The project ID to associate documents with
+     * @param repoUrl The Git repository URL (required)
+     * @param branch The branch to clone (optional, defaults to main/master)
+     * @return Response with ingestion statistics
+     */
+    @POST
+    @Path("/projects/{projectId}/ingest-repo")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response ingestRepository(
+            @PathParam("projectId") UUID projectId,
+            @QueryParam("repoUrl") String repoUrl,
+            @QueryParam("branch") String branch
+    ) {
+        if (repoUrl == null || repoUrl.isBlank()) {
+            throw new IllegalArgumentException("Repository URL is required");
+        }
+
+        // Verify project exists
+        if (projectService.findById(projectId) == null) {
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity(Map.of("error", "Project not found"))
+                    .build();
+        }
+
+        // Clone and extract all code/text files (no pattern filtering)
+        var files = gitRepositoryService.cloneAndExtractFiles(repoUrl, branch, null);
+
+        // Get project entity
+        var project = projectService.findById(projectId);
+
+        // Process each file as a document
+        int processedCount = 0;
+        for (var file : files) {
+            try {
+                // Detect document type based on file extension
+                DocumentType docType = detectDocumentType(file.fileName());
+
+                // Create document entity
+                Document document = new Document(
+                        docType,
+                        file.relativePath(), // Use relative path as filename for better identification
+                        file.content(),
+                        null, // no additional metadata
+                        project
+                );
+
+                // Persist document
+                documentService.create(document);
+                processedCount++;
+
+            } catch (Exception e) {
+                // Log error but continue processing other files
+                System.err.println("Failed to process file: " + file.relativePath() + " - " + e.getMessage());
+            }
+        }
+
+        return Response.ok(new GitIngestResponse(
+                files.size(),
+                processedCount,
+                "success",
+                projectId
+        )).build();
+    }
+
+    /**
+     * Detects document type based on file extension.
+     * Uses centralized CodeFileExtensions for 50+ programming languages.
+     */
+    private DocumentType detectDocumentType(String fileName) {
+        if (fileName == null) {
+            return DocumentType.TEXT;
+        }
+
+        return CodeFileExtensions.isCodeFile(fileName) ? DocumentType.CODE : DocumentType.TEXT;
     }
     
     /**

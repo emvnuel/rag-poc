@@ -60,6 +60,9 @@ public class LightRAGService {
     
     @Inject
     br.edu.ifba.lightrag.rerank.RerankerFactory rerankerFactory;
+    
+    @Inject
+    br.edu.ifba.document.CodeChunker codeChunker;
 
     @ConfigProperty(name = "lightrag.chunk.size", defaultValue = "1200")
     int chunkSize;
@@ -99,6 +102,12 @@ public class LightRAGService {
 
     @ConfigProperty(name = "lightrag.entity.types")
     String entityTypes;
+    
+    @ConfigProperty(name = "lightrag.entity.types.code")
+    String codeEntityTypes;
+    
+    @ConfigProperty(name = "lightrag.relationship.types.code")
+    String codeRelationshipTypes;
 
     @ConfigProperty(name = "lightrag.extraction.language")
     String extractionLanguage;
@@ -159,6 +168,12 @@ public class LightRAGService {
                     false  // usePipelineExecutors (default: use legacy executors)
             );
 
+            // Log configuration values for debugging
+            LOG.infof("Initializing LightRAG with entity types - TEXT: %d types, CODE: %d types, CODE relationships: %d types", 
+                entityTypes != null ? entityTypes.split(",").length : 0,
+                codeEntityTypes != null ? codeEntityTypes.split(",").length : 0,
+                codeRelationshipTypes != null ? codeRelationshipTypes.split(",").length : 0);
+            
             // Build LightRAG instance
             this.lightRAG = LightRAG.builder()
                     .config(config)
@@ -173,6 +188,7 @@ public class LightRAGService {
                     .entityResolver(entityResolver)
                     .deduplicationConfig(deduplicationConfig)
                     .reranker(rerankerFactory.getReranker())
+                    .codeChunker(codeChunker)
                     .localSystemPrompt(localSystemPrompt)
                     .globalSystemPrompt(globalSystemPrompt)
                     .hybridSystemPrompt(hybridSystemPrompt)
@@ -181,6 +197,8 @@ public class LightRAGService {
                     .bypassSystemPrompt(bypassSystemPrompt)
                     .entityExtractionSystemPrompt(entityExtractionSystemPrompt)
                     .entityTypes(entityTypes)
+                    .codeEntityTypes(codeEntityTypes)
+                    .codeRelationshipTypes(codeRelationshipTypes)
                     .extractionLanguage(extractionLanguage)
                     .entityExtractionUserPrompt(entityExtractionUserPrompt)
                     .build();
@@ -230,22 +248,29 @@ public class LightRAGService {
      * @param content The document content
      * @param fileName The document file name
      * @param projectId The project UUID
+     * @param documentType The document type (TEXT, CODE, etc.)
      * @return CompletableFuture with the LightRAG document ID
      */
     public CompletableFuture<String> insertDocument(
             final UUID documentId,
             final String content,
             final String fileName,
-            final UUID projectId) {
+            final UUID projectId,
+            final br.edu.ifba.document.DocumentType documentType) {
 
-        LOG.infof("Inserting document into LightRAG - documentId: %s, projectId: %s", documentId, projectId);
+        LOG.infof("Inserting document into LightRAG - documentId: %s, projectId: %s, type: %s", 
+                documentId, projectId, documentType);
 
         final Map<String, Object> metadata = Map.of(
                 "document_id", documentId.toString(),
                 "project_id", projectId.toString(),
                 "filepath", fileName,
-                "source_id", documentId.toString()
+                "source_id", documentId.toString(),
+                "document_type", documentType.name()
         );
+        
+        LOG.infof("LightRAGService - Metadata created for document %s: document_type=%s", 
+                documentId, metadata.get("document_type"));
 
         return lightRAG.insertWithId(documentId.toString(), content, metadata)
                 .thenApply(lightragDocId -> {

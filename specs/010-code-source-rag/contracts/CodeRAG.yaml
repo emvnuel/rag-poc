@@ -1,0 +1,256 @@
+openapi: 3.0.3
+info:
+  title: Code Source RAG - Internal Contracts
+  description: |
+    Internal API contracts for Code Source RAG feature.
+    Note: No new REST endpoints are required - code files are processed through
+    the existing `/projects/{projectId}/documents` endpoint.
+    
+    This document defines the extended schemas and metadata formats for code documents.
+  version: 1.0.0
+
+paths:
+  # No new endpoints - using existing document upload endpoint
+  # This section documents the extended behavior
+  
+  /projects/{projectId}/documents:
+    post:
+      summary: Upload document (extended for code files)
+      description: |
+        The existing document upload endpoint is extended to support code files.
+        Code files are detected by their extension and processed with code-specific
+        chunking and entity extraction.
+        
+        **New supported extensions**: .java, .py, .js, .ts, .go, .rs, .c, .cpp, .rb, .php, etc.
+        
+        **Binary file handling**: Files detected as binary are rejected with 400 status.
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Source code file to upload
+      responses:
+        '201':
+          description: Document created and queued for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentCreatedResponse'
+        '400':
+          description: Invalid file (binary, unsupported, or encoding error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                binaryFile:
+                  summary: Binary file rejected
+                  value:
+                    error: BINARY_FILE_REJECTED
+                    message: Cannot process binary file. Only text-based source code files are supported.
+                    fileName: compiled.pyc
+                    timestamp: "2025-12-13T10:30:00Z"
+                encodingError:
+                  summary: Encoding error
+                  value:
+                    error: ENCODING_ERROR
+                    message: Unable to decode file content. Ensure the file is UTF-8 encoded.
+                    fileName: legacy.java
+                    timestamp: "2025-12-13T10:30:00Z"
+
+components:
+  schemas:
+    DocumentCreatedResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Document ID (UUID v7)
+        status:
+          type: string
+          enum: [NOT_PROCESSED, PROCESSING, PROCESSED, FAILED]
+        createdAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Error code
+          enum:
+            - BINARY_FILE_REJECTED
+            - ENCODING_ERROR
+            - UNSUPPORTED_FILE_TYPE
+            - FILE_TOO_LARGE
+            - VALIDATION_ERROR
+        message:
+          type: string
+          description: Human-readable error description
+        field:
+          type: string
+          description: Field that caused the error (if applicable)
+        fileName:
+          type: string
+          description: Name of the file that caused the error (if applicable)
+        timestamp:
+          type: string
+          format: date-time
+
+    CodeDocumentMetadata:
+      type: object
+      description: Extended metadata for CODE type documents
+      properties:
+        language:
+          type: string
+          description: Detected programming language
+          example: java
+        languageDetectionMethod:
+          type: string
+          enum: [extension, content, heuristic]
+          description: How the language was detected
+        fileExtension:
+          type: string
+          description: Original file extension
+          example: .java
+        lineCount:
+          type: integer
+          description: Number of lines in the file
+        characterCount:
+          type: integer
+          description: Number of characters in the file
+        encoding:
+          type: string
+          description: Detected or converted encoding
+          example: UTF-8
+        imports:
+          type: array
+          items:
+            type: string
+          description: List of imports/requires detected in the file
+        topLevelDeclarations:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopLevelDeclaration'
+          description: Top-level classes, functions, etc.
+        isTestFile:
+          type: boolean
+          description: Whether this appears to be a test file
+        hasMainMethod:
+          type: boolean
+          description: Whether this file contains a main entry point
+
+    TopLevelDeclaration:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [class, interface, function, struct, enum, trait, module]
+        name:
+          type: string
+        line:
+          type: integer
+
+    CodeChunkMetadata:
+      type: object
+      description: Extended metadata for code chunks
+      properties:
+        fileName:
+          type: string
+        filePath:
+          type: string
+        language:
+          type: string
+        startLine:
+          type: integer
+        endLine:
+          type: integer
+        containingScope:
+          type: string
+          description: Fully qualified name of containing class/function
+          example: UserService.createUser
+        scopeType:
+          type: string
+          enum: [file, class, method, function, block]
+        chunkType:
+          type: string
+          enum: [file_header, class_definition, function_body, function_fragment, block]
+        imports:
+          type: array
+          items:
+            type: string
+        lineCount:
+          type: integer
+        indentLevel:
+          type: integer
+
+    CodeEntityTypes:
+      type: string
+      description: Extended entity types for code
+      enum:
+        # Existing types
+        - organization
+        - person
+        - location
+        - event
+        - concept
+        # New code types
+        - function
+        - class
+        - module
+        - interface
+        - variable
+        - api_endpoint
+        - dependency
+
+    CodeRelationTypes:
+      type: string
+      description: Extended relationship types for code
+      enum:
+        # Existing types
+        - related_to
+        - part_of
+        - causes
+        - follows
+        # New code types
+        - imports
+        - calls
+        - extends
+        - implements
+        - defines
+        - depends_on
+        - returns
+        - accepts
+
+    LanguageMapping:
+      type: object
+      description: Mapping of file extensions to programming languages
+      additionalProperties:
+        type: string
+      example:
+        .java: java
+        .py: python
+        .js: javascript
+        .ts: typescript
+        .go: go
+        .rs: rust
+        .c: c
+        .cpp: cpp
+        .rb: ruby
+        .php: php
+        .swift: swift
+        .kt: kotlin
+        .scala: scala
+        .sh: shell
+        .sql: sql
