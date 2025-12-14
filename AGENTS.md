@@ -633,7 +633,7 @@ The system supports uploading and querying source code files across 100+ program
 
 ### Configuration
 
-Configure via `application.properties`:
+Configure via `application.properties` and `.env`:
 ```properties
 # Code Document Extraction
 lightrag.code.extraction.enabled=${LIGHTRAG_CODE_EXTRACTION_ENABLED:true}
@@ -641,10 +641,18 @@ lightrag.code.extraction.enabled=${LIGHTRAG_CODE_EXTRACTION_ENABLED:true}
 # Binary file detection (check first N bytes)
 lightrag.code.binary.check.size=${LIGHTRAG_CODE_BINARY_CHECK_SIZE:8192}
 
-# Code-specific chunking preferences
-lightrag.code.chunk.prefer-boundaries=${LIGHTRAG_CODE_CHUNK_PREFER_BOUNDARIES:true}
-lightrag.code.chunk.min-chunk-lines=${LIGHTRAG_CODE_CHUNK_MIN_LINES:5}
+# Code entity and relationship types
+lightrag.entity.types.code=${LIGHTRAG_CODE_ENTITY_TYPES:function,class,module,...}
+lightrag.relationship.types.code=${LIGHTRAG_CODE_RELATIONSHIP_TYPES:calls,imports,inherits,...}
+
+# Code Extraction Prompts (Optional - uses comprehensive defaults if not specified)
+# System prompt with placeholders: {entity_types}, {relationship_types}, {language}
+lightrag.code.extraction.system.prompt=${LIGHTRAG_CODE_EXTRACTION_SYSTEM_PROMPT:...}
+# User prompt with placeholder: {input_text}
+lightrag.code.extraction.user.prompt=${LIGHTRAG_CODE_EXTRACTION_USER_PROMPT:...}
 ```
+
+**Note**: Prompts are optional. The system includes comprehensive default prompts optimized for code analysis. Override via environment variables only if you need domain-specific customization.
 
 ### Key Features
 

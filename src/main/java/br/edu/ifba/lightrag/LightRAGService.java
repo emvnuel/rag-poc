@@ -63,6 +63,9 @@ public class LightRAGService {
     
     @Inject
     br.edu.ifba.document.CodeChunker codeChunker;
+    
+    @Inject
+    br.edu.ifba.lightrag.core.CodeExtractionPrompts codeExtractionPrompts;
 
     @ConfigProperty(name = "lightrag.chunk.size", defaultValue = "1200")
     int chunkSize;
@@ -189,6 +192,7 @@ public class LightRAGService {
                     .deduplicationConfig(deduplicationConfig)
                     .reranker(rerankerFactory.getReranker())
                     .codeChunker(codeChunker)
+                    .codeExtractionPrompts(codeExtractionPrompts)
                     .localSystemPrompt(localSystemPrompt)
                     .globalSystemPrompt(globalSystemPrompt)
                     .hybridSystemPrompt(hybridSystemPrompt)

@@ -1,14 +1,23 @@
 package br.edu.ifba.lightrag.core;
 
+import jakarta.enterprise.context.ApplicationScoped;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
 /**
  * Prompts for extracting code-specific entities and relationships.
  * Provides specialized prompts for analyzing source code rather than general text.
+ * 
+ * <p>Prompts are configurable via application.properties and .env files:
+ * <ul>
+ *   <li>lightrag.code.extraction.system.prompt - System prompt template</li>
+ *   <li>lightrag.code.extraction.user.prompt - User prompt template</li>
+ * </ul>
+ * 
+ * <p>Default prompts are comprehensive and optimized for code analysis.
+ * Override via environment variables for domain-specific customization.
  */
-public final class CodeExtractionPrompts {
-    
-    private CodeExtractionPrompts() {
-        // Utility class
-    }
+@ApplicationScoped
+public class CodeExtractionPrompts {
     
     /**
      * Default entity types for code extraction.
@@ -25,17 +34,10 @@ public final class CodeExtractionPrompts {
         "calls,imports,inherits,implements,depends_on,uses,defined_in,exports,references,throws,returns";
     
     /**
-     * System prompt for extracting entities and relationships from source code.
-     * Instructs the LLM to focus on code structure rather than natural language patterns.
-     * 
-     * <p>Template variables:
-     * <ul>
-     *   <li>{entity_types} - Comma-separated list of entity types to extract</li>
-     *   <li>{language} - Programming language being analyzed (if known)</li>
-     *   <li>{input_text} - The source code to analyze</li>
-     * </ul>
+     * Default system prompt for code entity extraction.
+     * Comprehensive prompt with guidelines for extracting code entities.
      */
-    public static final String CODE_ENTITY_EXTRACTION_SYSTEM_PROMPT = """
+    private static final String DEFAULT_SYSTEM_PROMPT = """
         You are an expert code analyzer. Your task is to extract entities and relationships from source code.
         
         # Entity Types
@@ -77,7 +79,7 @@ public final class CodeExtractionPrompts {
         5. **Identify patterns**: Look for common patterns like factory functions, singletons, decorators
         6. **Note comments**: Include meaningful docstring/comment content as entity descriptions
         7. **Ignore noise**: Skip trivial variables (loop counters, temporary variables)
-        8. **Language awareness**: Adapt extraction to language-specific constructs (e.g., Python decorators, Java annotations, Rust traits)
+        8. **Language awareness**: Adapt extraction to language-specific constructs (Language: {language})
         
         # Output Format
         Return a JSON object with two lists:
@@ -101,62 +103,44 @@ public final class CodeExtractionPrompts {
         }
         ```
         
-        # Example (Java):
-        Input:
-        ```java
-        public class UserService {
-            private UserRepository repository;
-            
-            public User findById(Long id) {
-                return repository.findById(id);
-            }
-        }
-        ```
-        
-        Output:
-        ```json
-        {
-          "entities": [
-            {"name": "UserService", "type": "class", "description": "Service class for user operations"},
-            {"name": "findById", "type": "method", "description": "Finds a user by ID, signature: public User findById(Long id)"},
-            {"name": "UserRepository", "type": "dependency", "description": "Repository dependency for user data access"},
-            {"name": "User", "type": "type", "description": "Return type representing a user entity"}
-          ],
-          "relationships": [
-            {"source": "UserService", "target": "UserRepository", "type": "depends_on", "description": "UserService depends on UserRepository for data access"},
-            {"source": "findById", "target": "UserService", "type": "defined_in", "description": "findById method is defined in UserService class"},
-            {"source": "findById", "target": "repository", "type": "calls", "description": "findById calls repository.findById method"},
-            {"source": "findById", "target": "User", "type": "returns", "description": "findById returns User type"}
-          ]
-        }
-        ```
-        
         Now, analyze the following source code and extract all relevant entities and relationships.
         """;
     
     /**
-     * User prompt for code extraction (appended after system prompt).
+     * Default user prompt for code extraction.
      */
-    public static final String CODE_ENTITY_EXTRACTION_USER_PROMPT = 
+    private static final String DEFAULT_USER_PROMPT = 
         "Source code to analyze:\n\n{input_text}\n\n" +
         "Please extract all entities and relationships following the guidelines above.";
     
+    @ConfigProperty(name = "lightrag.code.extraction.system.prompt", defaultValue = "")
+    String configuredSystemPrompt;
+    
+    @ConfigProperty(name = "lightrag.code.extraction.user.prompt", defaultValue = "")
+    String configuredUserPrompt;
+    
     /**
      * Formats the code entity extraction system prompt with specific entity types and language.
+     * Uses configured prompt from application.properties, or falls back to comprehensive default.
      * 
      * @param entityTypes Comma-separated list of entity types (or null for default)
      * @param relationshipTypes Comma-separated list of relationship types (or null for default)
      * @param language Programming language being analyzed (or "unknown")
      * @return Formatted system prompt
      */
-    public static String formatSystemPrompt(final String entityTypes, 
-                                           final String relationshipTypes,
-                                           final String language) {
+    public String formatSystemPrompt(final String entityTypes, 
+                                    final String relationshipTypes,
+                                    final String language) {
         final String types = entityTypes != null ? entityTypes : DEFAULT_CODE_ENTITY_TYPES;
         final String relTypes = relationshipTypes != null ? relationshipTypes : DEFAULT_CODE_RELATIONSHIP_TYPES;
         final String lang = language != null ? language : "unknown";
         
-        return CODE_ENTITY_EXTRACTION_SYSTEM_PROMPT
+        // Use configured prompt if available, otherwise use default
+        final String basePrompt = configuredSystemPrompt != null && !configuredSystemPrompt.isEmpty()
+            ? configuredSystemPrompt
+            : DEFAULT_SYSTEM_PROMPT;
+        
+        return basePrompt
             .replace("{entity_types}", types)
             .replace("{relationship_types}", relTypes)
             .replace("{language}", lang);
@@ -164,12 +148,17 @@ public final class CodeExtractionPrompts {
     
     /**
      * Formats the user prompt with the actual source code.
+     * Uses configured prompt from application.properties, or falls back to default.
      * 
      * @param sourceCode The source code to analyze
      * @return Formatted user prompt
      */
-    public static String formatUserPrompt(final String sourceCode) {
-        return CODE_ENTITY_EXTRACTION_USER_PROMPT
-            .replace("{input_text}", sourceCode != null ? sourceCode : "");
+    public String formatUserPrompt(final String sourceCode) {
+        // Use configured prompt if available, otherwise use default
+        final String basePrompt = configuredUserPrompt != null && !configuredUserPrompt.isEmpty()
+            ? configuredUserPrompt
+            : DEFAULT_USER_PROMPT;
+        
+        return basePrompt.replace("{input_text}", sourceCode != null ? sourceCode : "");
     }
 }

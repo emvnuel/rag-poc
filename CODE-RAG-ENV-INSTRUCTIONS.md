@@ -16,11 +16,22 @@ If you want to customize behavior, add these to your `.env` file:
 
 ```bash
 # =============================================================================
-# Code Source RAG Configuration (All Optional)
+# Code Source RAG Configuration
 # =============================================================================
 
-# Enable/disable code file processing (default: true)
+# Enable/disable code file processing
 LIGHTRAG_CODE_EXTRACTION_ENABLED=true
+
+# Code Extraction Prompts (Optional - uses comprehensive defaults if not specified)
+# System prompt for code entity extraction
+# Supports placeholders: {entity_types}, {relationship_types}, {language}
+# Leave empty to use default comprehensive prompt
+LIGHTRAG_CODE_EXTRACTION_SYSTEM_PROMPT=""
+
+# User prompt for code extraction
+# Supports placeholder: {input_text}
+# Leave empty to use default
+LIGHTRAG_CODE_EXTRACTION_USER_PROMPT=""
 
 # Binary file detection threshold in bytes (default: 8192)
 LIGHTRAG_CODE_BINARY_CHECK_SIZE=8192

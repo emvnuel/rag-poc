@@ -59,6 +59,9 @@ public class LightRAG {
     // Code chunker (optional, for code-specific chunking)
     private final br.edu.ifba.document.CodeChunker codeChunker;
     
+    // Code extraction prompts (optional, for code-specific entity extraction)
+    private final CodeExtractionPrompts codeExtractionPrompts;
+    
     // System prompts for query modes
     private final String localSystemPrompt;
     private final String globalSystemPrompt;
@@ -132,6 +135,7 @@ public class LightRAG {
         private LightRAGExtractionConfig extractionConfig;
         private Reranker reranker;
         private br.edu.ifba.document.CodeChunker codeChunker;
+        private CodeExtractionPrompts codeExtractionPrompts;
         
         public Builder config(@NotNull LightRAGConfig config) {
             this.config = config;
@@ -263,6 +267,11 @@ public class LightRAG {
             return this;
         }
         
+        public Builder codeExtractionPrompts(@Nullable CodeExtractionPrompts codeExtractionPrompts) {
+            this.codeExtractionPrompts = codeExtractionPrompts;
+            return this;
+        }
+        
         public LightRAG build() {
             if (llmFunction == null) {
                 throw new IllegalStateException("llmFunction is required");
@@ -345,7 +354,8 @@ public class LightRAG {
                 deduplicationConfig,
                 extractionConfig,
                 reranker,
-                codeChunker
+                codeChunker,
+                codeExtractionPrompts
             );
         }
     }
@@ -379,7 +389,8 @@ public class LightRAG {
         @Nullable DeduplicationConfig deduplicationConfig,
         @Nullable LightRAGExtractionConfig extractionConfig,
         @Nullable Reranker reranker,
-        @Nullable br.edu.ifba.document.CodeChunker codeChunker
+        @Nullable br.edu.ifba.document.CodeChunker codeChunker,
+        @Nullable CodeExtractionPrompts codeExtractionPrompts
     ) {
         this.config = config;
         this.llmFunction = llmFunction;
@@ -395,6 +406,7 @@ public class LightRAG {
         this.extractionConfig = extractionConfig;
         this.reranker = reranker;
         this.codeChunker = codeChunker;
+        this.codeExtractionPrompts = codeExtractionPrompts;
         this.localSystemPrompt = localSystemPrompt;
         this.globalSystemPrompt = globalSystemPrompt;
         this.hybridSystemPrompt = hybridSystemPrompt;
@@ -972,12 +984,21 @@ public class LightRAG {
                 effectiveCodeEntityTypes.split(",").length, 
                 effectiveCodeRelationshipTypes.split(",").length);
             
-            filledSystemPrompt = br.edu.ifba.lightrag.core.CodeExtractionPrompts.formatSystemPrompt(
-                effectiveCodeEntityTypes,
-                effectiveCodeRelationshipTypes,
-                detectedLanguage
-            );
-            userPrompt = br.edu.ifba.lightrag.core.CodeExtractionPrompts.formatUserPrompt(chunkContent);
+            // Use code extraction prompts if available, otherwise fall back to static defaults
+            if (codeExtractionPrompts != null) {
+                filledSystemPrompt = codeExtractionPrompts.formatSystemPrompt(
+                    effectiveCodeEntityTypes,
+                    effectiveCodeRelationshipTypes,
+                    detectedLanguage
+                );
+                userPrompt = codeExtractionPrompts.formatUserPrompt(chunkContent);
+            } else {
+                // Fallback to basic prompt if CodeExtractionPrompts not injected
+                filledSystemPrompt = "Extract entities and relationships from this " + detectedLanguage + " code. " +
+                    "Entity types: " + effectiveCodeEntityTypes + ". " +
+                    "Relationship types: " + effectiveCodeRelationshipTypes + ".";
+                userPrompt = "Source code:\n\n" + chunkContent;
+            }
         } else {
             // Use default text extraction prompts
             filledSystemPrompt = fillEntityExtractionPromptTemplate(chunkContent);
