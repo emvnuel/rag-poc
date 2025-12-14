@@ -13,8 +13,8 @@ import br.edu.ifba.document.LlmEmbeddingClient;
 import br.edu.ifba.lightrag.LightRAGService;
 import br.edu.ifba.lightrag.core.LightRAGQueryResult;
 import br.edu.ifba.lightrag.core.QueryParam;
-import br.edu.ifba.lightrag.storage.impl.AgeGraphStorage;
-import br.edu.ifba.lightrag.storage.impl.PgVectorStorage;
+import br.edu.ifba.lightrag.storage.GraphStorage;
+import br.edu.ifba.lightrag.storage.VectorStorage;
 import br.edu.ifba.project.Project;
 import br.edu.ifba.project.ProjectRepository;
 import br.edu.ifba.project.ProjectServicePort;
@@ -52,10 +52,10 @@ class ProjectIsolationIT {
     LightRAGService lightRAGService;
 
     @Inject
-    AgeGraphStorage graphStorage;
+    GraphStorage graphStorage;
 
     @Inject
-    PgVectorStorage vectorStorage;
+    VectorStorage vectorStorage;
 
     @Inject
     ProjectServicePort projectService;
@@ -168,7 +168,8 @@ class ProjectIsolationIT {
             documentA1,
             contentA,
             "apple_tech.txt",
-            projectA
+            projectA,
+            br.edu.ifba.document.DocumentType.TEXT
         );
 
         // Insert document into Project B (Food focus)
@@ -185,7 +186,8 @@ class ProjectIsolationIT {
             documentB1,
             contentB,
             "apple_fruit.txt",
-            projectB
+            projectB,
+            br.edu.ifba.document.DocumentType.TEXT
         );
 
         // Wait for both inserts to complete
@@ -710,10 +712,10 @@ class ProjectIsolationIT {
         String content2 = "This is another document about science and research.";
 
         CompletableFuture<String> insert1 = lightRAGService.insertDocument(
-            doc1, content1, "tech.txt", projectId
+            doc1, content1, "tech.txt", projectId, br.edu.ifba.document.DocumentType.TEXT
         );
         CompletableFuture<String> insert2 = lightRAGService.insertDocument(
-            doc2, content2, "science.txt", projectId
+            doc2, content2, "science.txt", projectId, br.edu.ifba.document.DocumentType.TEXT
         );
 
         CompletableFuture.allOf(insert1, insert2).get(60, TimeUnit.SECONDS);
@@ -817,10 +819,10 @@ class ProjectIsolationIT {
         String contentB = "Project B document about Microsoft Corporation.";
 
         CompletableFuture<String> insertA = lightRAGService.insertDocument(
-            docA, contentA, "apple.txt", projectAId
+            docA, contentA, "apple.txt", projectAId, br.edu.ifba.document.DocumentType.TEXT
         );
         CompletableFuture<String> insertB = lightRAGService.insertDocument(
-            docB, contentB, "microsoft.txt", projectBId
+            docB, contentB, "microsoft.txt", projectBId, br.edu.ifba.document.DocumentType.TEXT
         );
 
         CompletableFuture.allOf(insertA, insertB).get(60, TimeUnit.SECONDS);

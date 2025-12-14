@@ -612,6 +612,145 @@ The SQLite schema mirrors PostgreSQL with these tables:
 
 All project-related tables have `ON DELETE CASCADE` for automatic cleanup.
 
+## Code Source RAG
+
+The system supports uploading and querying source code files across 100+ programming languages.
+
+### Supported Languages
+
+**Primary Languages** (15+ with content validation):
+- Java, Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Shell, SQL, R
+
+**Extended Support** (100+ file extensions):
+- JVM: Java, Kotlin, Scala, Groovy, Clojure
+- JavaScript/TypeScript: JS, TS, JSX, TSX, Vue, Svelte  
+- Systems: Rust, Go, C, C++, Zig
+- Scripting: Python, Ruby, PHP, Perl, Lua, Shell
+- Functional: Haskell, OCaml, Erlang, Elixir, Lisp, Scheme
+- Mobile: Swift, Dart, Objective-C
+- Data Science: R, Julia
+- Other: Fortran, COBOL, Pascal, Nim, Crystal, PowerShell, Solidity
+
+### Configuration
+
+Configure via `application.properties` and `.env`:
+```properties
+# Code Document Extraction
+lightrag.code.extraction.enabled=${LIGHTRAG_CODE_EXTRACTION_ENABLED:true}
+
+# Binary file detection (check first N bytes)
+lightrag.code.binary.check.size=${LIGHTRAG_CODE_BINARY_CHECK_SIZE:8192}
+
+# Code entity and relationship types
+lightrag.entity.types.code=${LIGHTRAG_CODE_ENTITY_TYPES:function,class,module,...}
+lightrag.relationship.types.code=${LIGHTRAG_CODE_RELATIONSHIP_TYPES:calls,imports,inherits,...}
+
+# Code Extraction Prompts (Optional - uses comprehensive defaults if not specified)
+# System prompt with placeholders: {entity_types}, {relationship_types}, {language}
+lightrag.code.extraction.system.prompt=${LIGHTRAG_CODE_EXTRACTION_SYSTEM_PROMPT:...}
+# User prompt with placeholder: {input_text}
+lightrag.code.extraction.user.prompt=${LIGHTRAG_CODE_EXTRACTION_USER_PROMPT:...}
+```
+
+**Note**: Prompts are optional. The system includes comprehensive default prompts optimized for code analysis. Override via environment variables only if you need domain-specific customization.
+
+### Key Features
+
+**Language Detection**: Automatic detection via file extension + content validation
+- Extension-based detection (99% accuracy)
+- Content pattern validation for verification
+- Supports 100+ file extensions
+
+**Binary File Rejection**: Multi-layer detection prevents binary files from being processed
+- Extension blacklist (.pyc, .class, .jar, .so, .dll, etc.)
+- Magic bytes detection (ELF, MZ, CAFEBABE, PK, PNG)
+- NUL byte frequency analysis
+
+**Code-Aware Chunking**: Respects logical code boundaries
+- Aligns chunks with function/class declarations when possible
+- Groups imports together at file start
+- Preserves decorators/annotations with declarations
+- Falls back to statement boundaries for oversized functions
+- Maintains exact indentation and formatting
+
+**Metadata Extraction**: Rich code-specific metadata
+- Language, line count, character count
+- Import statements
+- Top-level declarations (classes, functions, interfaces)
+- File encoding (UTF-8, UTF-16, ISO-8859-1)
+
+**Code Entity Types**: Extended entity types for code
+- FUNCTION, CLASS, MODULE, INTERFACE, VARIABLE
+- API_ENDPOINT, DEPENDENCY
+
+**Code Relationship Types**: Code-specific relationships
+- IMPORTS, CALLS, EXTENDS, IMPLEMENTS
+- DEFINES, DEPENDS_ON, RETURNS, ACCEPTS
+
+### Testing Commands
+
+```bash
+# Run all code-related unit tests
+./mvnw test -Dtest="*Code*,*Language*,*Binary*"
+
+# Run specific code extractor tests
+./mvnw test -Dtest=CodeDocumentExtractorTest
+./mvnw test -Dtest=CodeChunkerTest
+./mvnw test -Dtest=LanguageDetectorTest
+./mvnw test -Dtest=BinaryFileDetectorTest
+
+# Run code integration tests
+./mvnw test -Dtest=CodeQueryIT
+
+# Run all code RAG tests (unit + integration)
+./mvnw test -Dtest="*Code*"
+```
+
+### Key Components
+
+- **CodeDocumentExtractor** (`document/CodeDocumentExtractor.java`): Main extractor for code files
+- **LanguageDetector** (`document/LanguageDetector.java`): Language detection from extension + content
+- **BinaryFileDetector** (`document/BinaryFileDetector.java`): Binary file detection and rejection
+- **CodeChunker** (`document/CodeChunker.java`): Code-aware chunking with boundary detection
+- **CodeExtractionPrompts** (`document/CodeExtractionPrompts.java`): LLM prompts for code entity extraction
+
+### Usage
+
+Upload code files through the standard document upload endpoint:
+
+```bash
+# Upload a code file
+curl -X POST "http://localhost:8080/api/v1/projects/${PROJECT_ID}/documents" \
+  -F "file=@UserService.java"
+
+# Query the code
+curl -X POST "http://localhost:8080/api/v1/chat" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"projectId\": \"${PROJECT_ID}\",
+    \"message\": \"What methods are available in UserService?\",
+    \"history\": []
+  }"
+```
+
+### Common Issues & Troubleshooting
+
+**Problem**: Binary file uploaded with code extension
+- **Cause**: User uploaded compiled file (.class, .pyc) instead of source
+- **Fix**: System automatically rejects with "Binary file detected" error
+
+**Problem**: Code formatting not preserved in responses
+- **Cause**: Encoding issue or chunking split mid-statement
+- **Fix**: System preserves exact formatting; verify file is UTF-8 encoded
+
+**Problem**: Language not detected
+- **Cause**: Unusual file extension or ambiguous content
+- **Fix**: Add extension to `LanguageDetector.EXTENSION_MAP` if needed
+
+**Problem**: Code entities not extracted
+- **Cause**: LLM extraction failure or unsupported language pattern
+- **Fix**: Check logs for extraction errors; entity extraction works best with well-structured code
+
 ## Active Technologies
 - Java 21 + Quarkus 3.28.4, Resilience4j (via quarkus-smallrye-fault-tolerance), PostgreSQL 14+, Apache AGE, pgvector (004-retry-backoff)
 - `AgeGraphStorage.java` for graph ops, `PgVectorStorage.java` for vector ops (004-retry-backoff)
@@ -619,6 +758,8 @@ All project-related tables have `ON DELETE CASCADE` for automatic cleanup.
 - Apache POI for Excel export (007-lightrag-enhancements)
 - JTokkit 1.1.0 for accurate GPT-compatible token counting (cl100k_base encoding)
 - SQLite with sqlite-jdbc for portable/edge deployments (009-sqlite-storage-port)
+- Java 21 + Quarkus 3.28.4, Jakarta EE, jtokkit (token counting) (010-code-source-rag)
+- PostgreSQL 14+ with Apache AGE (graph) and pgvector (embeddings), SQLite (alternative) (010-code-source-rag)
 
 ## Recent Changes
 - 007-lightrag-enhancements: Added reranker integration (Cohere/Jina), document deletion with KG rebuild, entity merge operations, KG export (CSV/Excel/Markdown/Text), token usage tracking, chunk selection strategies

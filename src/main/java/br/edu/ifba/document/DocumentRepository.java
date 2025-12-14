@@ -12,10 +12,11 @@ import jakarta.persistence.LockModeType;
 
 /**
  * Hibernate/PostgreSQL implementation of DocumentRepositoryPort.
- * Active when lightrag.storage.backend=postgresql or when property is missing (default).
+ * 
+ * NOTE: This is NOT a CDI bean directly. It's instantiated by DocumentServiceProvider
+ * based on runtime configuration (lightrag.storage.backend property).
+ * This allows switching between PostgreSQL and SQLite backends at runtime in dev mode.
  */
-@ApplicationScoped
-@IfBuildProperty(name = "lightrag.storage.backend", stringValue = "postgresql", enableIfMissing = true)
 public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>, DocumentRepositoryPort {
 
     @Override

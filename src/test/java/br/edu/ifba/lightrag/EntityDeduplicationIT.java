@@ -4,7 +4,7 @@ import br.edu.ifba.lightrag.core.Entity;
 import br.edu.ifba.lightrag.core.EntityResolver;
 import br.edu.ifba.lightrag.core.EntityResolutionResult;
 import br.edu.ifba.project.Project;
-import br.edu.ifba.project.ProjectService;
+import br.edu.ifba.project.ProjectServicePort;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -39,7 +39,7 @@ class EntityDeduplicationIT {
     EntityResolver entityResolver;
 
     @Inject
-    ProjectService projectService;
+    ProjectServicePort projectService;
 
     private UUID testProjectId;
 

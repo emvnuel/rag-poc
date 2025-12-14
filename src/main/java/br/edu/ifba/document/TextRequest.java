@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotNull;
 
 public record TextRequest(
         @NotEmpty @NotNull String text,
-        @NotNull UUID projectId
+        @NotNull UUID projectId,
+        String filename,
+        DocumentType documentType
 ) {
 }
