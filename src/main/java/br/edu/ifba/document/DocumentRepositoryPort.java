@@ -7,8 +7,10 @@ import java.util.UUID;
 /**
  * Repository abstraction for Document persistence operations.
  * 
- * <p>This interface allows switching between different persistence backends
- * (Hibernate/PostgreSQL or SQLite) via configuration.</p>
+ * <p>
+ * This interface allows switching between different persistence backends
+ * (Hibernate/PostgreSQL or SQLite) via configuration.
+ * </p>
  */
 public interface DocumentRepositoryPort {
 
@@ -94,4 +96,12 @@ public interface DocumentRepositoryPort {
      * Flushes pending changes to the database.
      */
     void flush();
+
+    /**
+     * Counts documents for a project.
+     * 
+     * @param projectId the project ID
+     * @return count of documents
+     */
+    long countByProjectId(UUID projectId);
 }

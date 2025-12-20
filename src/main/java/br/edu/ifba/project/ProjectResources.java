@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import br.edu.ifba.document.DocumentInfoResponse;
+import br.edu.ifba.document.DocumentRepositoryPort;
 import br.edu.ifba.document.DocumentServicePort;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
@@ -29,6 +30,9 @@ public class ProjectResources {
     @Inject
     DocumentServicePort documentService;
 
+    @Inject
+    DocumentRepositoryPort documentRepository;
+
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
@@ -51,8 +55,7 @@ public class ProjectResources {
                 project.getName(),
                 project.getCreatedAt(),
                 project.getUpdatedAt(),
-                project.getDocuments().size()
-        );
+                documentRepository.countByProjectId(project.getId()));
     }
 
     @GET
@@ -64,8 +67,7 @@ public class ProjectResources {
                         project.getName(),
                         project.getCreatedAt(),
                         project.getUpdatedAt(),
-                        project.getDocuments().size()
-                ))
+                        documentRepository.countByProjectId(project.getId())))
                 .collect(Collectors.toList());
     }
 
@@ -80,8 +82,7 @@ public class ProjectResources {
                 project.getName(),
                 project.getCreatedAt(),
                 project.getUpdatedAt(),
-                project.getDocuments().size()
-        );
+                documentRepository.countByProjectId(project.getId()));
     }
 
     @DELETE
@@ -104,8 +105,7 @@ public class ProjectResources {
                         document.getFileName(),
                         document.getMetadata(),
                         document.getCreatedAt(),
-                        document.getUpdatedAt()
-                ))
+                        document.getUpdatedAt()))
                 .collect(Collectors.toList());
     }
 }

@@ -29,8 +29,10 @@ import jakarta.inject.Inject;
  * CDI producer that selects the appropriate DocumentServicePort implementation
  * based on runtime configuration.
  * 
- * <p>This solves the issue where @IfBuildProperty is a build-time annotation
- * that doesn't work when switching profiles at runtime in dev mode.</p>
+ * <p>
+ * This solves the issue where @IfBuildProperty is a build-time annotation
+ * that doesn't work when switching profiles at runtime in dev mode.
+ * </p>
  */
 @ApplicationScoped
 public class DocumentServiceProvider {
@@ -53,12 +55,15 @@ public class DocumentServiceProvider {
     @Inject
     Instance<ProjectRepositoryPort> projectRepository;
 
-    // Cache the repository instance to share between service and repository producers
+    // Cache the repository instance to share between service and repository
+    // producers
     private DocumentRepositoryPort cachedRepository;
 
     /**
-     * Produces the appropriate DocumentRepositoryPort based on storage backend configuration.
-     * This is needed for classes that inject DocumentRepositoryPort directly (e.g., DocumentProcessorJob, SearchService).
+     * Produces the appropriate DocumentRepositoryPort based on storage backend
+     * configuration.
+     * This is needed for classes that inject DocumentRepositoryPort directly (e.g.,
+     * DocumentProcessorJob, SearchService).
      * 
      * @return DocumentRepositoryPort implementation for the configured backend
      */
@@ -68,7 +73,7 @@ public class DocumentServiceProvider {
         if (cachedRepository != null) {
             return cachedRepository;
         }
-        
+
         LOG.infof("Selecting DocumentRepositoryPort for backend: %s", storageBackend);
 
         if ("sqlite".equalsIgnoreCase(storageBackend)) {
@@ -80,9 +85,8 @@ public class DocumentServiceProvider {
                 throw new IllegalStateException("SQLite backend selected but ProjectRepositoryPort not available");
             }
             cachedRepository = new RuntimeSQLiteDocumentRepository(
-                sqliteConnectionManager.get(),
-                projectRepository.get()
-            );
+                    sqliteConnectionManager.get(),
+                    projectRepository.get());
         } else {
             LOG.info("Using PostgreSQL document repository (Hibernate)");
             if (!hibernateRepository.isResolvable()) {
@@ -94,7 +98,8 @@ public class DocumentServiceProvider {
     }
 
     /**
-     * Produces the appropriate DocumentServicePort based on storage backend configuration.
+     * Produces the appropriate DocumentServicePort based on storage backend
+     * configuration.
      * 
      * @return DocumentServicePort implementation for the configured backend
      */
@@ -116,15 +121,17 @@ public class DocumentServiceProvider {
     }
 
     /**
-     * Runtime SQLite document repository (embedded to avoid @IfBuildProperty issues).
+     * Runtime SQLite document repository (embedded to avoid @IfBuildProperty
+     * issues).
      */
     private static class RuntimeSQLiteDocumentRepository implements DocumentRepositoryPort {
         private static final Logger LOG = Logger.getLogger(RuntimeSQLiteDocumentRepository.class);
-        
+
         private final SQLiteConnectionManager connectionManager;
         private final ProjectRepositoryPort projectRepository;
 
-        RuntimeSQLiteDocumentRepository(SQLiteConnectionManager connectionManager, ProjectRepositoryPort projectRepository) {
+        RuntimeSQLiteDocumentRepository(SQLiteConnectionManager connectionManager,
+                ProjectRepositoryPort projectRepository) {
             this.connectionManager = connectionManager;
             this.projectRepository = projectRepository;
         }
@@ -134,18 +141,18 @@ public class DocumentServiceProvider {
             if (document.getId() == null) {
                 document.setId(UuidUtils.randomV7());
             }
-            
+
             final String sql = """
-                INSERT INTO documents (id, project_id, type, status, file_name, content, metadata, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                ON CONFLICT(id) DO UPDATE SET
-                    type = excluded.type,
-                    status = excluded.status,
-                    file_name = excluded.file_name,
-                    content = excluded.content,
-                    metadata = excluded.metadata,
-                    updated_at = datetime('now')
-                """;
+                    INSERT INTO documents (id, project_id, type, status, file_name, content, metadata, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    ON CONFLICT(id) DO UPDATE SET
+                        type = excluded.type,
+                        status = excluded.status,
+                        file_name = excluded.file_name,
+                        content = excluded.content,
+                        metadata = excluded.metadata,
+                        updated_at = datetime('now')
+                    """;
 
             Connection conn = null;
             try {
@@ -173,12 +180,12 @@ public class DocumentServiceProvider {
         @Override
         public Optional<Document> findDocumentById(final UUID id) {
             final String sql = """
-                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-                FROM documents WHERE id = ?
-                """;
+                    SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                    FROM documents WHERE id = ?
+                    """;
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, id.toString());
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
@@ -194,18 +201,18 @@ public class DocumentServiceProvider {
         @Override
         public Document findByIdOrThrow(final UUID id) {
             return findDocumentById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Document not found with id: " + id));
+                    .orElseThrow(() -> new IllegalArgumentException("Document not found with id: " + id));
         }
 
         @Override
         public Document findByFileName(final String fileName) {
             final String sql = """
-                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-                FROM documents WHERE file_name = ?
-                """;
+                    SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                    FROM documents WHERE file_name = ?
+                    """;
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, fileName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
@@ -221,13 +228,13 @@ public class DocumentServiceProvider {
         @Override
         public List<Document> findByProjectId(final UUID projectId) {
             final String sql = """
-                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-                FROM documents WHERE project_id = ? ORDER BY created_at DESC
-                """;
+                    SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                    FROM documents WHERE project_id = ? ORDER BY created_at DESC
+                    """;
             final List<Document> documents = new ArrayList<>();
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, projectId.toString());
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -243,14 +250,14 @@ public class DocumentServiceProvider {
         @Override
         public List<Document> findNotProcessed(final int limit) {
             final String sql = """
-                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-                FROM documents WHERE status = 'NOT_PROCESSED' 
-                ORDER BY created_at ASC LIMIT ?
-                """;
+                    SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                    FROM documents WHERE status = 'NOT_PROCESSED'
+                    ORDER BY created_at ASC LIMIT ?
+                    """;
             final List<Document> documents = new ArrayList<>();
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setInt(1, limit);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -296,10 +303,10 @@ public class DocumentServiceProvider {
         @Override
         public void update(final Document document) {
             final String sql = """
-                UPDATE documents SET 
-                    type = ?, status = ?, file_name = ?, content = ?, metadata = ?, updated_at = datetime('now')
-                WHERE id = ?
-                """;
+                    UPDATE documents SET
+                        type = ?, status = ?, file_name = ?, content = ?, metadata = ?, updated_at = datetime('now')
+                    WHERE id = ?
+                    """;
 
             Connection conn = null;
             try {
@@ -331,13 +338,13 @@ public class DocumentServiceProvider {
         @Override
         public List<Document> findByStatus(final DocumentStatus status) {
             final String sql = """
-                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-                FROM documents WHERE status = ? ORDER BY created_at ASC
-                """;
+                    SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                    FROM documents WHERE status = ? ORDER BY created_at ASC
+                    """;
             final List<Document> documents = new ArrayList<>();
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, status.name());
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -350,29 +357,47 @@ public class DocumentServiceProvider {
             return documents;
         }
 
+        @Override
+        public long countByProjectId(final UUID projectId) {
+            final String sql = "SELECT COUNT(*) FROM documents WHERE project_id = ?";
+
+            try (Connection conn = connectionManager.getReadConnection();
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, projectId.toString());
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getLong(1);
+                    }
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to count documents by project id: " + projectId, e);
+            }
+            return 0;
+        }
+
         private Document mapRowToDocument(final ResultSet rs) throws SQLException {
             final UUID projectId = UUID.fromString(rs.getString("project_id"));
             final Project project = projectRepository.findByIdOrThrow(projectId);
-            
+
             final DocumentType type = DocumentType.valueOf(rs.getString("type"));
             final String fileName = rs.getString("file_name");
             final String content = rs.getString("content");
             final String metadata = rs.getString("metadata");
-            
+
             final Document document = new Document(type, fileName, content, metadata, project);
             document.setId(UUID.fromString(rs.getString("id")));
             document.setStatus(DocumentStatus.valueOf(rs.getString("status")));
-            
+
             final String createdAt = rs.getString("created_at");
             if (createdAt != null) {
                 document.setCreatedAt(LocalDateTime.parse(createdAt, DATE_FORMAT));
             }
-            
+
             final String updatedAt = rs.getString("updated_at");
             if (updatedAt != null) {
                 document.setUpdatedAt(LocalDateTime.parse(updatedAt, DATE_FORMAT));
             }
-            
+
             return document;
         }
     }
@@ -382,11 +407,12 @@ public class DocumentServiceProvider {
      */
     private static class RuntimeSQLiteDocumentService implements DocumentServicePort {
         private static final Logger LOG = Logger.getLogger(RuntimeSQLiteDocumentService.class);
-        
+
         private final DocumentRepositoryPort repository;
         private final DocumentDeletionService documentDeletionService;
 
-        RuntimeSQLiteDocumentService(DocumentRepositoryPort repository, DocumentDeletionService documentDeletionService) {
+        RuntimeSQLiteDocumentService(DocumentRepositoryPort repository,
+                DocumentDeletionService documentDeletionService) {
             this.repository = repository;
             this.documentDeletionService = documentDeletionService;
         }
@@ -410,28 +436,29 @@ public class DocumentServiceProvider {
         @Override
         public void delete(final UUID documentId, final UUID projectId, final boolean skipRebuild) {
             final Document document = repository.findByIdOrThrow(documentId);
-            
+
             try {
                 KnowledgeRebuildResult result = documentDeletionService
-                    .deleteDocument(projectId, documentId, skipRebuild)
-                    .join();
-                
-                LOG.infof("Document deletion completed (skipRebuild=%s) - entities deleted: %d, rebuilt: %d, relations deleted: %d, rebuilt: %d",
-                    skipRebuild,
-                    result.entitiesDeleted().size(),
-                    result.entitiesRebuilt().size(),
-                    result.relationsDeleted(),
-                    result.relationsRebuilt());
-                
+                        .deleteDocument(projectId, documentId, skipRebuild)
+                        .join();
+
+                LOG.infof(
+                        "Document deletion completed (skipRebuild=%s) - entities deleted: %d, rebuilt: %d, relations deleted: %d, rebuilt: %d",
+                        skipRebuild,
+                        result.entitiesDeleted().size(),
+                        result.entitiesRebuilt().size(),
+                        result.relationsDeleted(),
+                        result.relationsRebuilt());
+
                 if (!result.errors().isEmpty()) {
-                    LOG.warnf("Document deletion had %d errors: %s", 
-                        result.errors().size(), 
-                        String.join("; ", result.errors()));
+                    LOG.warnf("Document deletion had %d errors: %s",
+                            result.errors().size(),
+                            String.join("; ", result.errors()));
                 }
             } catch (Exception e) {
                 throw new RuntimeException("Failed to delete graph data for document: " + documentId, e);
             }
-            
+
             // Delete the document (vectors will cascade automatically via FK constraint)
             repository.deleteDocument(document);
         }
@@ -449,28 +476,30 @@ public class DocumentServiceProvider {
         @Override
         public DocumentProgressResponse getProcessingProgress(final UUID documentId) {
             final Document document = repository.findByIdOrThrow(documentId);
-            
+
             final double progressPercentage = switch (document.getStatus()) {
                 case PROCESSED -> 100.0;
                 case PROCESSING -> 50.0;
                 case NOT_PROCESSED -> 0.0;
             };
-            
+
             return new DocumentProgressResponse(progressPercentage);
         }
     }
 
     /**
      * Runtime PostgreSQL document service wrapper.
-     * Uses the Hibernate repository but avoids @Transactional since we're in a producer.
+     * Uses the Hibernate repository but avoids @Transactional since we're in a
+     * producer.
      */
     private static class RuntimePostgresDocumentService implements DocumentServicePort {
         private static final Logger LOG = Logger.getLogger(RuntimePostgresDocumentService.class);
-        
+
         private final DocumentRepositoryPort repository;
         private final DocumentDeletionService documentDeletionService;
 
-        RuntimePostgresDocumentService(DocumentRepositoryPort repository, DocumentDeletionService documentDeletionService) {
+        RuntimePostgresDocumentService(DocumentRepositoryPort repository,
+                DocumentDeletionService documentDeletionService) {
             this.repository = repository;
             this.documentDeletionService = documentDeletionService;
         }
@@ -494,28 +523,29 @@ public class DocumentServiceProvider {
         @Override
         public void delete(final UUID documentId, final UUID projectId, final boolean skipRebuild) {
             final Document document = repository.findByIdOrThrow(documentId);
-            
+
             try {
                 KnowledgeRebuildResult result = documentDeletionService
-                    .deleteDocument(projectId, documentId, skipRebuild)
-                    .join();
-                
-                LOG.infof("Document deletion completed (skipRebuild=%s) - entities deleted: %d, rebuilt: %d, relations deleted: %d, rebuilt: %d",
-                    skipRebuild,
-                    result.entitiesDeleted().size(),
-                    result.entitiesRebuilt().size(),
-                    result.relationsDeleted(),
-                    result.relationsRebuilt());
-                
+                        .deleteDocument(projectId, documentId, skipRebuild)
+                        .join();
+
+                LOG.infof(
+                        "Document deletion completed (skipRebuild=%s) - entities deleted: %d, rebuilt: %d, relations deleted: %d, rebuilt: %d",
+                        skipRebuild,
+                        result.entitiesDeleted().size(),
+                        result.entitiesRebuilt().size(),
+                        result.relationsDeleted(),
+                        result.relationsRebuilt());
+
                 if (!result.errors().isEmpty()) {
-                    LOG.warnf("Document deletion had %d errors: %s", 
-                        result.errors().size(), 
-                        String.join("; ", result.errors()));
+                    LOG.warnf("Document deletion had %d errors: %s",
+                            result.errors().size(),
+                            String.join("; ", result.errors()));
                 }
             } catch (Exception e) {
                 throw new RuntimeException("Failed to delete graph data for document: " + documentId, e);
             }
-            
+
             repository.deleteDocument(document);
         }
 
@@ -532,13 +562,13 @@ public class DocumentServiceProvider {
         @Override
         public DocumentProgressResponse getProcessingProgress(final UUID documentId) {
             final Document document = repository.findByIdOrThrow(documentId);
-            
+
             final double progressPercentage = switch (document.getStatus()) {
                 case PROCESSED -> 100.0;
                 case PROCESSING -> 50.0;
                 case NOT_PROCESSED -> 0.0;
             };
-            
+
             return new DocumentProgressResponse(progressPercentage);
         }
     }

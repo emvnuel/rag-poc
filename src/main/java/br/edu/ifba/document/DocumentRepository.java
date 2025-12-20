@@ -13,9 +13,11 @@ import jakarta.persistence.LockModeType;
 /**
  * Hibernate/PostgreSQL implementation of DocumentRepositoryPort.
  * 
- * NOTE: This is NOT a CDI bean directly. It's instantiated by DocumentServiceProvider
+ * NOTE: This is NOT a CDI bean directly. It's instantiated by
+ * DocumentServiceProvider
  * based on runtime configuration (lightrag.storage.backend property).
- * This allows switching between PostgreSQL and SQLite backends at runtime in dev mode.
+ * This allows switching between PostgreSQL and SQLite backends at runtime in
+ * dev mode.
  */
 public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>, DocumentRepositoryPort {
 
@@ -82,5 +84,10 @@ public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>
     @Override
     public void flush() {
         getEntityManager().flush();
+    }
+
+    @Override
+    public long countByProjectId(final UUID projectId) {
+        return count("project.id", projectId);
     }
 }
