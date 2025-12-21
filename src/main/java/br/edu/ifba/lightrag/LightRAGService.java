@@ -72,6 +72,9 @@ public class LightRAGService {
     @Inject
     br.edu.ifba.lightrag.core.CodeExtractionPrompts codeExtractionPrompts;
 
+    @Inject
+    br.edu.ifba.lightrag.core.LightRAGExtractionConfig extractionConfig;
+
     @ConfigProperty(name = "lightrag.chunk.size", defaultValue = "1200")
     int chunkSize;
 
@@ -243,7 +246,7 @@ public class LightRAGService {
                     embeddingBatchSize,
                     entityDescriptionMaxLength,
                     entityDescriptionSeparator,
-                    false // usePipelineExecutors (default: use legacy executors)
+                    true // usePipelineExecutors - enables keyword extraction (high/low level keywords)
             );
 
             // Log configuration values for debugging
@@ -278,6 +281,7 @@ public class LightRAGService {
                     .reranker(rerankerFactory.getReranker())
                     .codeChunker(codeChunker)
                     .codeExtractionPrompts(codeExtractionPrompts)
+                    .extractionConfig(extractionConfig)
                     .localSystemPrompt(localSystemPrompt)
                     .globalSystemPrompt(globalSystemPrompt)
                     .hybridSystemPrompt(hybridSystemPrompt)

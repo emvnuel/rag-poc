@@ -44,10 +44,23 @@ public class Project {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    /**
+     * Keycloak subject ID (sub claim) of the project creator.
+     * Nullable for backward compatibility with existing projects.
+     * Legacy projects (owner_id = NULL) can only be modified by admins.
+     */
+    @Column(name = "owner_id", length = 255)
+    private String ownerId;
+
     @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private Set<Document> documents = new HashSet<>();
 
     public Project(final String name) {
         this.name = name;
+    }
+
+    public Project(final String name, final String ownerId) {
+        this.name = name;
+        this.ownerId = ownerId;
     }
 }

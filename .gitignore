@@ -52,6 +52,8 @@ nb-configuration.xml
 /lightrag-storage/
 
 # Development tools
+data/
+.agent/
 .specify/
 .opencode/
 

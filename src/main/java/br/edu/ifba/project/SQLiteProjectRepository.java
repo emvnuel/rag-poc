@@ -39,14 +39,15 @@ public class SQLiteProjectRepository implements ProjectRepositoryPort {
         if (project.getId() == null) {
             project.setId(UuidUtils.randomV7());
         }
-        
+
         final String sql = """
-            INSERT INTO projects (id, name, created_at, updated_at)
-            VALUES (?, ?, datetime('now'), datetime('now'))
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                updated_at = datetime('now')
-            """;
+                INSERT INTO projects (id, name, owner_id, created_at, updated_at)
+                VALUES (?, ?, ?, datetime('now'), datetime('now'))
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    owner_id = excluded.owner_id,
+                    updated_at = datetime('now')
+                """;
 
         Connection conn = null;
         try {
@@ -54,6 +55,7 @@ public class SQLiteProjectRepository implements ProjectRepositoryPort {
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, project.getId().toString());
                 stmt.setString(2, project.getName());
+                stmt.setString(3, project.getOwnerId());
                 stmt.executeUpdate();
                 LOG.debugf("Saved project: %s", project.getId());
             }
@@ -68,10 +70,10 @@ public class SQLiteProjectRepository implements ProjectRepositoryPort {
 
     @Override
     public Optional<Project> findProjectById(final UUID id) {
-        final String sql = "SELECT id, name, created_at, updated_at FROM projects WHERE id = ?";
+        final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects WHERE id = ?";
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, id.toString());
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
@@ -87,15 +89,15 @@ public class SQLiteProjectRepository implements ProjectRepositoryPort {
     @Override
     public Project findByIdOrThrow(final UUID id) {
         return findProjectById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Project not found with id: " + id));
+                .orElseThrow(() -> new IllegalArgumentException("Project not found with id: " + id));
     }
 
     @Override
     public Project findByName(final String name) {
-        final String sql = "SELECT id, name, created_at, updated_at FROM projects WHERE name = ?";
+        final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects WHERE name = ?";
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, name);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
@@ -110,17 +112,36 @@ public class SQLiteProjectRepository implements ProjectRepositoryPort {
 
     @Override
     public List<Project> findAllProjects() {
-        final String sql = "SELECT id, name, created_at, updated_at FROM projects ORDER BY created_at DESC";
+        final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects ORDER BY created_at DESC";
         final List<Project> projects = new ArrayList<>();
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql);
-             ResultSet rs = stmt.executeQuery()) {
+                PreparedStatement stmt = conn.prepareStatement(sql);
+                ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
                 projects.add(mapRowToProject(rs));
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to list all projects", e);
+        }
+        return projects;
+    }
+
+    @Override
+    public List<Project> findByOwnerId(final String ownerId) {
+        final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects WHERE owner_id = ? ORDER BY created_at DESC";
+        final List<Project> projects = new ArrayList<>();
+
+        try (Connection conn = connectionManager.getReadConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, ownerId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    projects.add(mapRowToProject(rs));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to find projects by owner: " + ownerId, e);
         }
         return projects;
     }
@@ -156,17 +177,18 @@ public class SQLiteProjectRepository implements ProjectRepositoryPort {
     private Project mapRowToProject(final ResultSet rs) throws SQLException {
         final Project project = new Project(rs.getString("name"));
         project.setId(UUID.fromString(rs.getString("id")));
-        
+        project.setOwnerId(rs.getString("owner_id"));
+
         final String createdAt = rs.getString("created_at");
         if (createdAt != null) {
             project.setCreatedAt(LocalDateTime.parse(createdAt, DATE_FORMAT));
         }
-        
+
         final String updatedAt = rs.getString("updated_at");
         if (updatedAt != null) {
             project.setUpdatedAt(LocalDateTime.parse(updatedAt, DATE_FORMAT));
         }
-        
+
         return project;
     }
 }

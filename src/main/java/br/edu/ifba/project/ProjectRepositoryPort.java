@@ -7,8 +7,10 @@ import java.util.UUID;
 /**
  * Repository abstraction for Project persistence operations.
  * 
- * <p>This interface allows switching between different persistence backends
- * (Hibernate/PostgreSQL or SQLite) via configuration.</p>
+ * <p>
+ * This interface allows switching between different persistence backends
+ * (Hibernate/PostgreSQL or SQLite) via configuration.
+ * </p>
  */
 public interface ProjectRepositoryPort {
 
@@ -50,6 +52,14 @@ public interface ProjectRepositoryPort {
      * @return list of all projects
      */
     List<Project> findAllProjects();
+
+    /**
+     * Finds all projects owned by the specified user.
+     * 
+     * @param ownerId the Keycloak subject ID of the owner
+     * @return list of projects owned by the user
+     */
+    List<Project> findByOwnerId(String ownerId);
 
     /**
      * Deletes a project.

@@ -50,6 +50,7 @@ public class DocumentServiceProvider {
     Instance<SQLiteConnectionManager> sqliteConnectionManager;
 
     @Inject
+    @HibernateDocument
     Instance<DocumentRepository> hibernateRepository;
 
     @Inject
