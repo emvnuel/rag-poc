@@ -38,6 +38,7 @@ services:
       - "8180:8180"
     volumes:
       - ./src/main/resources/keycloak:/opt/keycloak/data/import
+      - ./src/main/resources/keycloak/themes:/opt/keycloak/themes
     depends_on:
       postgres:
         condition: service_healthy

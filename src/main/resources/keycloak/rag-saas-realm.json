@@ -3,6 +3,7 @@
   "realm": "rag-saas",
   "displayName": "RAG SaaS",
   "displayNameHtml": "<div class=\"kc-logo-text\"><span>RAG SaaS</span></div>",
+  "loginTheme": "rag-saas-theme",
   "enabled": true,
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
