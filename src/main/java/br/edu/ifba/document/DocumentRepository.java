@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import io.quarkus.arc.properties.IfBuildProperty;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import io.quarkus.panache.common.Page;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -13,10 +12,11 @@ import jakarta.persistence.LockModeType;
 /**
  * Hibernate/PostgreSQL implementation of DocumentRepositoryPort.
  * 
- * NOTE: This is NOT a CDI bean directly. It's instantiated by DocumentServiceProvider
- * based on runtime configuration (lightrag.storage.backend property).
- * This allows switching between PostgreSQL and SQLite backends at runtime in dev mode.
+ * Uses @HibernateDocument qualifier to disambiguate from the producer method
+ * in DocumentServiceProvider that also provides DocumentRepositoryPort.
  */
+@ApplicationScoped
+@HibernateDocument
 public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>, DocumentRepositoryPort {
 
     @Override
@@ -82,5 +82,10 @@ public class DocumentRepository implements PanacheRepositoryBase<Document, UUID>
     @Override
     public void flush() {
         getEntityManager().flush();
+    }
+
+    @Override
+    public long countByProjectId(final UUID projectId) {
+        return count("project.id", projectId);
     }
 }

@@ -9,7 +9,10 @@ import java.util.UUID;
 import br.edu.ifba.exception.FileUploadException;
 import br.edu.ifba.exception.PdfProcessingException;
 import br.edu.ifba.project.ProjectServicePort;
+import br.edu.ifba.security.ProjectAuthorizationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
@@ -26,6 +29,7 @@ import jakarta.ws.rs.core.Response;
 import org.jboss.resteasy.reactive.multipart.FileUpload;
 
 @Path("/documents")
+@RolesAllowed({ "user", "admin" })
 public class DocumentResources {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -42,6 +46,12 @@ public class DocumentResources {
     @Inject
     SearchService searchService;
 
+    @Inject
+    SecurityIdentity securityIdentity;
+
+    @Inject
+    ProjectAuthorizationService authService;
+
     @POST
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @Produces(MediaType.APPLICATION_JSON)
@@ -55,11 +65,14 @@ public class DocumentResources {
             throw new IllegalArgumentException("Project ID is required");
         }
 
+        // T035: Check authorization before uploading to project
+        authService.checkWriteAccess(projectId);
+
         final String fileName = file.fileName().toLowerCase();
 
         try (InputStream textStream = file.uploadedFile().toFile().toPath().toUri().toURL().openStream();
-             InputStream metadataStream = file.uploadedFile().toFile().toPath().toUri().toURL().openStream()) {
-            
+                InputStream metadataStream = file.uploadedFile().toFile().toPath().toUri().toURL().openStream()) {
+
             final DocumentExtractor extractor = extractorFactory.getExtractor(fileName);
             final String text = extractor.extract(textStream);
             final Map<String, Object> contentMetadata = extractor.extractMetadata(metadataStream);
@@ -67,9 +80,9 @@ public class DocumentResources {
             final String metadata = FileMetadataExtractor.extractMetadata(file, contentMetadata);
 
             // Determine document type based on extractor
-            final DocumentType documentType = (extractor instanceof CodeDocumentExtractor) 
-                ? DocumentType.CODE 
-                : DocumentType.FILE;
+            final DocumentType documentType = (extractor instanceof CodeDocumentExtractor)
+                    ? DocumentType.CODE
+                    : DocumentType.FILE;
 
             final var project = projectService.findById(projectId);
             final Document document = new Document(documentType, fileName, formattedText, metadata, project);
@@ -92,11 +105,11 @@ public class DocumentResources {
         final String formattedText = TextFormatter.format(request.text());
 
         final var project = projectService.findById(request.projectId());
-        
+
         // Use documentType from request, default to TEXT if not specified
         final DocumentType docType = request.documentType() != null ? request.documentType() : DocumentType.TEXT;
         final String fileName = request.filename() != null ? request.filename() : "text-input";
-        
+
         final Document document = new Document(docType, fileName, formattedText, null, project);
         final Document created = documentService.create(document);
 
@@ -123,11 +136,12 @@ public class DocumentResources {
             final String text = extractor.fetchAndExtract(request.url());
             final Map<String, Object> contentMetadata = extractor.fetchAndExtractMetadata(request.url());
             final String formattedText = TextFormatter.format(text);
-            
+
             final String metadata = objectMapper.writeValueAsString(contentMetadata);
 
             final var project = projectService.findById(request.projectId());
-            final Document document = new Document(DocumentType.WEBSITE, request.url(), formattedText, metadata, project);
+            final Document document = new Document(DocumentType.WEBSITE, request.url(), formattedText, metadata,
+                    project);
             final Document created = documentService.create(document);
 
             return Response.created(URI.create("/documents/" + created.getId()))
@@ -153,8 +167,7 @@ public class DocumentResources {
                 document.getFileName(),
                 document.getMetadata(),
                 document.getCreatedAt(),
-                document.getUpdatedAt()
-        );
+                document.getUpdatedAt());
     }
 
     @GET
@@ -188,8 +201,8 @@ public class DocumentResources {
      * Automatically detects and includes code files from 50+ programming languages.
      *
      * @param projectId The project ID to associate documents with
-     * @param repoUrl The Git repository URL (required)
-     * @param branch The branch to clone (optional, defaults to main/master)
+     * @param repoUrl   The Git repository URL (required)
+     * @param branch    The branch to clone (optional, defaults to main/master)
      * @return Response with ingestion statistics
      */
     @POST
@@ -198,8 +211,7 @@ public class DocumentResources {
     public Response ingestRepository(
             @PathParam("projectId") UUID projectId,
             @QueryParam("repoUrl") String repoUrl,
-            @QueryParam("branch") String branch
-    ) {
+            @QueryParam("branch") String branch) {
         if (repoUrl == null || repoUrl.isBlank()) {
             throw new IllegalArgumentException("Repository URL is required");
         }
@@ -230,8 +242,7 @@ public class DocumentResources {
                         file.relativePath(), // Use relative path as filename for better identification
                         file.content(),
                         null, // no additional metadata
-                        project
-                );
+                        project);
 
                 // Persist document
                 documentService.create(document);
@@ -247,8 +258,7 @@ public class DocumentResources {
                 files.size(),
                 processedCount,
                 "success",
-                projectId
-        )).build();
+                projectId)).build();
     }
 
     /**
@@ -262,31 +272,37 @@ public class DocumentResources {
 
         return CodeFileExtensions.isCodeFile(fileName) ? DocumentType.CODE : DocumentType.TEXT;
     }
-    
+
     /**
-     * Deletes a document and all associated data (vectors and graph entities/relations).
+     * Deletes a document and all associated data (vectors and graph
+     * entities/relations).
      * 
-     * By default, shared entities (referenced by multiple documents) are intelligently
-     * rebuilt using cached extraction data. Use skipRebuild=true to delete all affected
+     * By default, shared entities (referenced by multiple documents) are
+     * intelligently
+     * rebuilt using cached extraction data. Use skipRebuild=true to delete all
+     * affected
      * entities without rebuilding.
      * 
-     * @param id The document ID to delete
-     * @param projectId The project ID (required for graph cleanup)
-     * @param skipRebuild If true, skips KG rebuild and deletes all affected entities (default: false)
+     * @param id          The document ID to delete
+     * @param projectId   The project ID (required for graph cleanup)
+     * @param skipRebuild If true, skips KG rebuild and deletes all affected
+     *                    entities (default: false)
      * @return Response with no content (204) on success
      */
     @DELETE
     @Path("/{id}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response delete(
-        @PathParam("id") final UUID id, 
-        @QueryParam("projectId") final UUID projectId,
-        @QueryParam("skipRebuild") final Boolean skipRebuild
-    ) {
+            @PathParam("id") final UUID id,
+            @QueryParam("projectId") final UUID projectId,
+            @QueryParam("skipRebuild") final Boolean skipRebuild) {
         if (projectId == null) {
             throw new IllegalArgumentException("Project ID is required");
         }
-        
+
+        // T036: Check authorization before deleting document
+        authService.checkWriteAccess(projectId);
+
         final boolean skip = skipRebuild != null && skipRebuild;
         documentService.delete(id, projectId, skip);
         return Response.noContent().build();

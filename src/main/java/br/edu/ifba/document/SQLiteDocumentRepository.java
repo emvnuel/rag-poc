@@ -22,11 +22,14 @@ import jakarta.inject.Inject;
 /**
  * SQLite implementation of DocumentRepositoryPort.
  * 
- * <p><b>Note:</b> This class is now deprecated in favor of the embedded
+ * <p>
+ * <b>Note:</b> This class is now deprecated in favor of the embedded
  * RuntimeSQLiteDocumentRepository in DocumentServiceProvider, which handles
  * runtime selection between PostgreSQL and SQLite backends.
- * The @IfBuildProperty annotation was removed because it's a build-time annotation
- * that doesn't work when switching profiles at runtime in dev mode.</p>
+ * The @IfBuildProperty annotation was removed because it's a build-time
+ * annotation
+ * that doesn't work when switching profiles at runtime in dev mode.
+ * </p>
  * 
  * @deprecated Use DocumentServiceProvider instead for runtime backend selection
  */
@@ -47,18 +50,18 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
         if (document.getId() == null) {
             document.setId(UuidUtils.randomV7());
         }
-        
+
         final String sql = """
-            INSERT INTO documents (id, project_id, type, status, file_name, content, metadata, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-            ON CONFLICT(id) DO UPDATE SET
-                type = excluded.type,
-                status = excluded.status,
-                file_name = excluded.file_name,
-                content = excluded.content,
-                metadata = excluded.metadata,
-                updated_at = datetime('now')
-            """;
+                INSERT INTO documents (id, project_id, type, status, file_name, content, metadata, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                ON CONFLICT(id) DO UPDATE SET
+                    type = excluded.type,
+                    status = excluded.status,
+                    file_name = excluded.file_name,
+                    content = excluded.content,
+                    metadata = excluded.metadata,
+                    updated_at = datetime('now')
+                """;
 
         Connection conn = null;
         try {
@@ -86,12 +89,12 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     @Override
     public Optional<Document> findDocumentById(final UUID id) {
         final String sql = """
-            SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-            FROM documents WHERE id = ?
-            """;
+                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                FROM documents WHERE id = ?
+                """;
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, id.toString());
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
@@ -107,18 +110,18 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     @Override
     public Document findByIdOrThrow(final UUID id) {
         return findDocumentById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Document not found with id: " + id));
+                .orElseThrow(() -> new IllegalArgumentException("Document not found with id: " + id));
     }
 
     @Override
     public Document findByFileName(final String fileName) {
         final String sql = """
-            SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-            FROM documents WHERE file_name = ?
-            """;
+                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                FROM documents WHERE file_name = ?
+                """;
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, fileName);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
@@ -134,13 +137,13 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     @Override
     public List<Document> findByProjectId(final UUID projectId) {
         final String sql = """
-            SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-            FROM documents WHERE project_id = ? ORDER BY created_at DESC
-            """;
+                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                FROM documents WHERE project_id = ? ORDER BY created_at DESC
+                """;
         final List<Document> documents = new ArrayList<>();
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, projectId.toString());
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
@@ -156,14 +159,14 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     @Override
     public List<Document> findNotProcessed(final int limit) {
         final String sql = """
-            SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-            FROM documents WHERE status = 'NOT_PROCESSED' 
-            ORDER BY created_at ASC LIMIT ?
-            """;
+                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                FROM documents WHERE status = 'NOT_PROCESSED'
+                ORDER BY created_at ASC LIMIT ?
+                """;
         final List<Document> documents = new ArrayList<>();
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setInt(1, limit);
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
@@ -180,7 +183,8 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     public List<Document> findNotProcessedWithLock(final int limit) {
         // SQLite doesn't support row-level locking like PostgreSQL
         // For SQLite, we rely on the connection-level write lock
-        // In a real scenario, you might want to use a transaction and update status immediately
+        // In a real scenario, you might want to use a transaction and update status
+        // immediately
         return findNotProcessed(limit);
     }
 
@@ -210,10 +214,10 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     @Override
     public void update(final Document document) {
         final String sql = """
-            UPDATE documents SET 
-                type = ?, status = ?, file_name = ?, content = ?, metadata = ?, updated_at = datetime('now')
-            WHERE id = ?
-            """;
+                UPDATE documents SET
+                    type = ?, status = ?, file_name = ?, content = ?, metadata = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """;
 
         Connection conn = null;
         try {
@@ -245,13 +249,13 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
     @Override
     public List<Document> findByStatus(final DocumentStatus status) {
         final String sql = """
-            SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at 
-            FROM documents WHERE status = ? ORDER BY created_at ASC
-            """;
+                SELECT id, project_id, type, status, file_name, content, metadata, created_at, updated_at
+                FROM documents WHERE status = ? ORDER BY created_at ASC
+                """;
         final List<Document> documents = new ArrayList<>();
 
         try (Connection conn = connectionManager.getReadConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, status.name());
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
@@ -264,29 +268,47 @@ public class SQLiteDocumentRepository implements DocumentRepositoryPort {
         return documents;
     }
 
+    @Override
+    public long countByProjectId(final UUID projectId) {
+        final String sql = "SELECT COUNT(*) FROM documents WHERE project_id = ?";
+
+        try (Connection conn = connectionManager.getReadConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, projectId.toString());
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count documents by project id: " + projectId, e);
+        }
+        return 0;
+    }
+
     private Document mapRowToDocument(final ResultSet rs) throws SQLException {
         final UUID projectId = UUID.fromString(rs.getString("project_id"));
         final Project project = projectRepository.findByIdOrThrow(projectId);
-        
+
         final DocumentType type = DocumentType.valueOf(rs.getString("type"));
         final String fileName = rs.getString("file_name");
         final String content = rs.getString("content");
         final String metadata = rs.getString("metadata");
-        
+
         final Document document = new Document(type, fileName, content, metadata, project);
         document.setId(UUID.fromString(rs.getString("id")));
         document.setStatus(DocumentStatus.valueOf(rs.getString("status")));
-        
+
         final String createdAt = rs.getString("created_at");
         if (createdAt != null) {
             document.setCreatedAt(LocalDateTime.parse(createdAt, DATE_FORMAT));
         }
-        
+
         final String updatedAt = rs.getString("updated_at");
         if (updatedAt != null) {
             document.setUpdatedAt(LocalDateTime.parse(updatedAt, DATE_FORMAT));
         }
-        
+
         return document;
     }
 }

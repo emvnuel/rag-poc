@@ -7,16 +7,19 @@ import java.util.UUID;
 import io.quarkus.arc.properties.IfBuildProperty;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.transaction.Transactional;
 
 /**
  * Hibernate/PostgreSQL implementation of ProjectRepositoryPort.
- * Active when lightrag.storage.backend=postgresql or when property is missing (default).
+ * Active when lightrag.storage.backend=postgresql or when property is missing
+ * (default).
  */
 @ApplicationScoped
 @IfBuildProperty(name = "lightrag.storage.backend", stringValue = "postgresql", enableIfMissing = true)
 public class ProjectRepository implements PanacheRepositoryBase<Project, UUID>, ProjectRepositoryPort {
 
     @Override
+    @Transactional
     public void save(final Project project) {
         persist(project);
     }
@@ -46,6 +49,12 @@ public class ProjectRepository implements PanacheRepositoryBase<Project, UUID>, 
     }
 
     @Override
+    public List<Project> findByOwnerId(final String ownerId) {
+        return list("ownerId", ownerId);
+    }
+
+    @Override
+    @Transactional
     public void deleteProject(final Project project) {
         delete(project);
     }

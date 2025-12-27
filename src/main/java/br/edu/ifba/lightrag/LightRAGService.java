@@ -25,13 +25,18 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Service that manages LightRAG instance with pluggable storage backends.
- * This service integrates LightRAG's knowledge graph extraction and querying capabilities
+ * This service integrates LightRAG's knowledge graph extraction and querying
+ * capabilities
  * with the existing document processing pipeline.
  * 
- * <p>The storage backend is selected via configuration:</p>
+ * <p>
+ * The storage backend is selected via configuration:
+ * </p>
  * <ul>
- *   <li>{@code lightrag.storage.backend=postgresql} - PostgreSQL with pgvector + Apache AGE</li>
- *   <li>{@code lightrag.storage.backend=sqlite} - SQLite for local/edge deployment</li>
+ * <li>{@code lightrag.storage.backend=postgresql} - PostgreSQL with pgvector +
+ * Apache AGE</li>
+ * <li>{@code lightrag.storage.backend=sqlite} - SQLite for local/edge
+ * deployment</li>
  * </ul>
  */
 @ApplicationScoped
@@ -57,15 +62,18 @@ public class LightRAGService {
 
     @Inject
     br.edu.ifba.lightrag.core.DeduplicationConfig deduplicationConfig;
-    
+
     @Inject
     br.edu.ifba.lightrag.rerank.RerankerFactory rerankerFactory;
-    
+
     @Inject
     br.edu.ifba.document.CodeChunker codeChunker;
-    
+
     @Inject
     br.edu.ifba.lightrag.core.CodeExtractionPrompts codeExtractionPrompts;
+
+    @Inject
+    br.edu.ifba.lightrag.core.LightRAGExtractionConfig extractionConfig;
 
     @ConfigProperty(name = "lightrag.chunk.size", defaultValue = "1200")
     int chunkSize;
@@ -82,33 +90,58 @@ public class LightRAGService {
     @ConfigProperty(name = "lightrag.storage.working.dir", defaultValue = "./lightrag-data")
     String workingDir;
 
-    @ConfigProperty(name = "lightrag.query.system.prompt.local")
-    String localSystemPrompt;
-
-    @ConfigProperty(name = "lightrag.query.system.prompt.global")
-    String globalSystemPrompt;
-
-    @ConfigProperty(name = "lightrag.query.system.prompt.hybrid")
-    String hybridSystemPrompt;
-
-    @ConfigProperty(name = "lightrag.query.system.prompt.naive")
-    String naiveSystemPrompt;
-
-    @ConfigProperty(name = "lightrag.query.system.prompt.mix")
-    String mixSystemPrompt;
+    // Unified prompt approach: single template with source type substitution
+    @ConfigProperty(name = "lightrag.query.system.prompt.unified")
+    String unifiedSystemPrompt;
 
     @ConfigProperty(name = "lightrag.query.system.prompt.bypass")
     String bypassSystemPrompt;
+
+    // Source type mappings for each mode
+    @ConfigProperty(name = "lightrag.query.source.type.local")
+    String sourceTypeLocal;
+
+    @ConfigProperty(name = "lightrag.query.source.type.global")
+    String sourceTypeGlobal;
+
+    @ConfigProperty(name = "lightrag.query.source.type.hybrid")
+    String sourceTypeHybrid;
+
+    @ConfigProperty(name = "lightrag.query.source.type.naive")
+    String sourceTypeNaive;
+
+    @ConfigProperty(name = "lightrag.query.source.type.mix")
+    String sourceTypeMix;
+
+    // Source type articles (grammar helper)
+    @ConfigProperty(name = "lightrag.query.source.type.article.local")
+    String sourceTypeArticleLocal;
+
+    @ConfigProperty(name = "lightrag.query.source.type.article.global")
+    String sourceTypeArticleGlobal;
+
+    @ConfigProperty(name = "lightrag.query.source.type.article.hybrid")
+    String sourceTypeArticleHybrid;
+
+    @ConfigProperty(name = "lightrag.query.source.type.article.naive")
+    String sourceTypeArticleNaive;
+
+    @ConfigProperty(name = "lightrag.query.source.type.article.mix")
+    String sourceTypeArticleMix;
+
+    // Response language configuration
+    @ConfigProperty(name = "lightrag.response.language")
+    String responseLanguage;
 
     @ConfigProperty(name = "lightrag.entity.extraction.system.prompt")
     String entityExtractionSystemPrompt;
 
     @ConfigProperty(name = "lightrag.entity.types")
     String entityTypes;
-    
+
     @ConfigProperty(name = "lightrag.entity.types.code")
     String codeEntityTypes;
-    
+
     @ConfigProperty(name = "lightrag.relationship.types.code")
     String codeRelationshipTypes;
 
@@ -136,6 +169,51 @@ public class LightRAGService {
     private InMemoryDocStatusStorage docStatusStorage;
 
     /**
+     * Resolves the unified system prompt for a specific query mode by substituting
+     * placeholders.
+     * 
+     * @param mode The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
+     * @return The resolved system prompt with all placeholders substituted
+     */
+    private String resolveSystemPromptForMode(String mode) {
+        String sourceType;
+        String sourceTypeArticle;
+
+        switch (mode.toUpperCase()) {
+            case "LOCAL" -> {
+                sourceType = sourceTypeLocal;
+                sourceTypeArticle = sourceTypeArticleLocal;
+            }
+            case "GLOBAL" -> {
+                sourceType = sourceTypeGlobal;
+                sourceTypeArticle = sourceTypeArticleGlobal;
+            }
+            case "HYBRID" -> {
+                sourceType = sourceTypeHybrid;
+                sourceTypeArticle = sourceTypeArticleHybrid;
+            }
+            case "NAIVE" -> {
+                sourceType = sourceTypeNaive;
+                sourceTypeArticle = sourceTypeArticleNaive;
+            }
+            case "MIX" -> {
+                sourceType = sourceTypeMix;
+                sourceTypeArticle = sourceTypeArticleMix;
+            }
+            default -> {
+                sourceType = "documents";
+                sourceTypeArticle = "the ";
+            }
+        }
+
+        return unifiedSystemPrompt
+                .replace("{SOURCE_TYPE}", sourceType)
+                .replace("{SOURCE_TYPE_ARTICLE}", sourceTypeArticle)
+                .replace("{SOURCE_TYPE_UPPER}", sourceType.toUpperCase())
+                .replace("{LANGUAGE}", responseLanguage);
+    }
+
+    /**
      * Initializes LightRAG instance with all storage backends.
      * Called automatically on application startup.
      */
@@ -161,22 +239,32 @@ public class LightRAGService {
             final LightRAG.LightRAGConfig config = new LightRAG.LightRAGConfig(
                     chunkSize,
                     chunkOverlap,
-                    4000,  // maxTokens
+                    4000, // maxTokens
                     topK,
-                    true,  // enableCache
+                    true, // enableCache
                     kgExtractionBatchSize,
                     embeddingBatchSize,
                     entityDescriptionMaxLength,
                     entityDescriptionSeparator,
-                    false  // usePipelineExecutors (default: use legacy executors)
+                    true // usePipelineExecutors - enables keyword extraction (high/low level keywords)
             );
 
             // Log configuration values for debugging
-            LOG.infof("Initializing LightRAG with entity types - TEXT: %d types, CODE: %d types, CODE relationships: %d types", 
-                entityTypes != null ? entityTypes.split(",").length : 0,
-                codeEntityTypes != null ? codeEntityTypes.split(",").length : 0,
-                codeRelationshipTypes != null ? codeRelationshipTypes.split(",").length : 0);
-            
+            LOG.infof(
+                    "Initializing LightRAG with entity types - TEXT: %d types, CODE: %d types, CODE relationships: %d types",
+                    entityTypes != null ? entityTypes.split(",").length : 0,
+                    codeEntityTypes != null ? codeEntityTypes.split(",").length : 0,
+                    codeRelationshipTypes != null ? codeRelationshipTypes.split(",").length : 0);
+
+            // Resolve system prompts for each mode using the unified template
+            final String localSystemPrompt = resolveSystemPromptForMode("LOCAL");
+            final String globalSystemPrompt = resolveSystemPromptForMode("GLOBAL");
+            final String hybridSystemPrompt = resolveSystemPromptForMode("HYBRID");
+            final String naiveSystemPrompt = resolveSystemPromptForMode("NAIVE");
+            final String mixSystemPrompt = resolveSystemPromptForMode("MIX");
+
+            LOG.info("Resolved unified system prompts for all query modes");
+
             // Build LightRAG instance
             this.lightRAG = LightRAG.builder()
                     .config(config)
@@ -193,6 +281,7 @@ public class LightRAGService {
                     .reranker(rerankerFactory.getReranker())
                     .codeChunker(codeChunker)
                     .codeExtractionPrompts(codeExtractionPrompts)
+                    .extractionConfig(extractionConfig)
                     .localSystemPrompt(localSystemPrompt)
                     .globalSystemPrompt(globalSystemPrompt)
                     .hybridSystemPrompt(hybridSystemPrompt)
@@ -246,12 +335,13 @@ public class LightRAGService {
 
     /**
      * Inserts a document into the LightRAG knowledge graph.
-     * This processes the document through chunking, entity extraction, and graph construction.
+     * This processes the document through chunking, entity extraction, and graph
+     * construction.
      *
-     * @param documentId The document UUID
-     * @param content The document content
-     * @param fileName The document file name
-     * @param projectId The project UUID
+     * @param documentId   The document UUID
+     * @param content      The document content
+     * @param fileName     The document file name
+     * @param projectId    The project UUID
      * @param documentType The document type (TEXT, CODE, etc.)
      * @return CompletableFuture with the LightRAG document ID
      */
@@ -262,7 +352,7 @@ public class LightRAGService {
             final UUID projectId,
             final br.edu.ifba.document.DocumentType documentType) {
 
-        LOG.infof("Inserting document into LightRAG - documentId: %s, projectId: %s, type: %s", 
+        LOG.infof("Inserting document into LightRAG - documentId: %s, projectId: %s, type: %s",
                 documentId, projectId, documentType);
 
         final Map<String, Object> metadata = Map.of(
@@ -270,15 +360,14 @@ public class LightRAGService {
                 "project_id", projectId.toString(),
                 "filepath", fileName,
                 "source_id", documentId.toString(),
-                "document_type", documentType.name()
-        );
-        
-        LOG.infof("LightRAGService - Metadata created for document %s: document_type=%s", 
+                "document_type", documentType.name());
+
+        LOG.infof("LightRAGService - Metadata created for document %s: document_type=%s",
                 documentId, metadata.get("document_type"));
 
         return lightRAG.insertWithId(documentId.toString(), content, metadata)
                 .thenApply(lightragDocId -> {
-                    LOG.infof("Document %s successfully inserted into LightRAG with ID: %s", 
+                    LOG.infof("Document %s successfully inserted into LightRAG with ID: %s",
                             documentId, lightragDocId);
                     return lightragDocId;
                 })
@@ -291,10 +380,12 @@ public class LightRAGService {
     /**
      * Queries the LightRAG knowledge graph.
      *
-     * @param query The query string
-     * @param mode The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
-     * @param projectId The project UUID (for filtering - currently not implemented in base LightRAG)
-     * @return CompletableFuture with the query result containing answer and source chunks
+     * @param query     The query string
+     * @param mode      The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
+     * @param projectId The project UUID (for filtering - currently not implemented
+     *                  in base LightRAG)
+     * @return CompletableFuture with the query result containing answer and source
+     *         chunks
      */
     public CompletableFuture<LightRAGQueryResult> query(
             final String query,
@@ -302,15 +393,17 @@ public class LightRAGService {
             final UUID projectId) {
         return query(query, mode, projectId, null);
     }
-    
+
     /**
      * Queries the LightRAG knowledge graph with optional reranking control.
      *
-     * @param query The query string
-     * @param mode The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
-     * @param projectId The project UUID (for filtering)
-     * @param enableRerank Optional flag to enable/disable reranking (null uses global config)
-     * @return CompletableFuture with the query result containing answer and source chunks
+     * @param query        The query string
+     * @param mode         The query mode (LOCAL, GLOBAL, HYBRID, NAIVE, MIX)
+     * @param projectId    The project UUID (for filtering)
+     * @param enableRerank Optional flag to enable/disable reranking (null uses
+     *                     global config)
+     * @return CompletableFuture with the query result containing answer and source
+     *         chunks
      */
     public CompletableFuture<LightRAGQueryResult> query(
             final String query,
@@ -318,7 +411,7 @@ public class LightRAGService {
             final UUID projectId,
             final Boolean enableRerank) {
 
-        LOG.infof("Executing LightRAG query - mode: %s, projectId: %s, query: '%s', rerank: %s", 
+        LOG.infof("Executing LightRAG query - mode: %s, projectId: %s, query: '%s', rerank: %s",
                 mode, projectId, query, enableRerank);
 
         final QueryParam.Builder paramBuilder = QueryParam.builder()
@@ -326,17 +419,18 @@ public class LightRAGService {
                 .topK(topK)
                 .chunkTopK(chunkTopK)
                 .projectId(projectId.toString());
-        
-        // Apply rerank setting: use explicit value if provided, otherwise default to true (config-based)
+
+        // Apply rerank setting: use explicit value if provided, otherwise default to
+        // true (config-based)
         if (enableRerank != null) {
             paramBuilder.enableRerank(enableRerank);
         }
-        
+
         final QueryParam param = paramBuilder.build();
 
         return lightRAG.query(query, param)
                 .thenApply(result -> {
-                    LOG.infof("LightRAG query completed - answer length: %d characters, sources: %d", 
+                    LOG.infof("LightRAG query completed - answer length: %d characters, sources: %d",
                             result.answer().length(), result.totalSources());
                     return result;
                 })
@@ -349,9 +443,10 @@ public class LightRAGService {
     /**
      * Queries with default HYBRID mode.
      *
-     * @param query The query string
+     * @param query     The query string
      * @param projectId The project UUID
-     * @return CompletableFuture with the query result containing answer and source chunks
+     * @return CompletableFuture with the query result containing answer and source
+     *         chunks
      */
     public CompletableFuture<LightRAGQueryResult> query(final String query, final UUID projectId) {
         return query(query, QueryParam.Mode.HYBRID, projectId);
@@ -362,7 +457,8 @@ public class LightRAGService {
      * This is used to prevent duplicate processing and detect race conditions.
      *
      * @param documentId The document UUID
-     * @return CompletableFuture<Boolean> true if the document has vectors, false otherwise
+     * @return CompletableFuture<Boolean> true if the document has vectors, false
+     *         otherwise
      */
     public CompletableFuture<Boolean> hasDocumentVectors(final UUID documentId) {
         LOG.debugf("Checking if document %s has existing vectors", documentId);
@@ -373,7 +469,7 @@ public class LightRAGService {
      * Deletes all graph entities and relations associated with a document.
      * This is called when a document is deleted to ensure proper cleanup.
      * 
-     * @param projectId The project UUID
+     * @param projectId  The project UUID
      * @param documentId The document UUID to delete graph data for
      * @return CompletableFuture with the number of items deleted
      */

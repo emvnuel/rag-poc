@@ -26,8 +26,10 @@ import jakarta.inject.Inject;
  * CDI producer that selects the appropriate ProjectServicePort implementation
  * based on runtime configuration.
  * 
- * <p>This solves the issue where @IfBuildProperty is a build-time annotation
- * that doesn't work when switching profiles at runtime in dev mode.</p>
+ * <p>
+ * This solves the issue where @IfBuildProperty is a build-time annotation
+ * that doesn't work when switching profiles at runtime in dev mode.
+ * </p>
  */
 @ApplicationScoped
 public class ProjectServiceProvider {
@@ -48,7 +50,8 @@ public class ProjectServiceProvider {
     Instance<ProjectRepository> hibernateRepository;
 
     /**
-     * Produces the appropriate ProjectServicePort based on storage backend configuration.
+     * Produces the appropriate ProjectServicePort based on storage backend
+     * configuration.
      * 
      * @return ProjectServicePort implementation for the configured backend
      */
@@ -63,9 +66,8 @@ public class ProjectServiceProvider {
                 throw new IllegalStateException("SQLite backend selected but SQLiteConnectionManager not available");
             }
             return new RuntimeSQLiteProjectService(
-                new RuntimeSQLiteProjectRepository(sqliteConnectionManager.get()),
-                graphStorage
-            );
+                    new RuntimeSQLiteProjectRepository(sqliteConnectionManager.get()),
+                    graphStorage);
         } else {
             LOG.info("Using PostgreSQL project service (Hibernate)");
             if (!hibernateRepository.isResolvable()) {
@@ -76,7 +78,8 @@ public class ProjectServiceProvider {
     }
 
     /**
-     * Runtime SQLite project repository (embedded to avoid @IfBuildProperty issues).
+     * Runtime SQLite project repository (embedded to avoid @IfBuildProperty
+     * issues).
      */
     private static class RuntimeSQLiteProjectRepository implements ProjectRepositoryPort {
         private final SQLiteConnectionManager connectionManager;
@@ -90,14 +93,15 @@ public class ProjectServiceProvider {
             if (project.getId() == null) {
                 project.setId(UuidUtils.randomV7());
             }
-            
+
             final String sql = """
-                INSERT INTO projects (id, name, created_at, updated_at)
-                VALUES (?, ?, datetime('now'), datetime('now'))
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    updated_at = datetime('now')
-                """;
+                    INSERT INTO projects (id, name, owner_id, created_at, updated_at)
+                    VALUES (?, ?, ?, datetime('now'), datetime('now'))
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        owner_id = excluded.owner_id,
+                        updated_at = datetime('now')
+                    """;
 
             Connection conn = null;
             try {
@@ -105,6 +109,7 @@ public class ProjectServiceProvider {
                 try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                     stmt.setString(1, project.getId().toString());
                     stmt.setString(2, project.getName());
+                    stmt.setString(3, project.getOwnerId());
                     stmt.executeUpdate();
                 }
             } catch (SQLException e) {
@@ -118,10 +123,10 @@ public class ProjectServiceProvider {
 
         @Override
         public Optional<Project> findProjectById(final UUID id) {
-            final String sql = "SELECT id, name, created_at, updated_at FROM projects WHERE id = ?";
+            final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects WHERE id = ?";
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, id.toString());
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
@@ -137,15 +142,15 @@ public class ProjectServiceProvider {
         @Override
         public Project findByIdOrThrow(final UUID id) {
             return findProjectById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Project not found with id: " + id));
+                    .orElseThrow(() -> new IllegalArgumentException("Project not found with id: " + id));
         }
 
         @Override
         public Project findByName(final String name) {
-            final String sql = "SELECT id, name, created_at, updated_at FROM projects WHERE name = ?";
+            final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects WHERE name = ?";
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
@@ -160,17 +165,36 @@ public class ProjectServiceProvider {
 
         @Override
         public List<Project> findAllProjects() {
-            final String sql = "SELECT id, name, created_at, updated_at FROM projects ORDER BY created_at DESC";
+            final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects ORDER BY created_at DESC";
             final List<Project> projects = new ArrayList<>();
 
             try (Connection conn = connectionManager.getReadConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql);
-                 ResultSet rs = stmt.executeQuery()) {
+                    PreparedStatement stmt = conn.prepareStatement(sql);
+                    ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
                     projects.add(mapRowToProject(rs));
                 }
             } catch (SQLException e) {
                 throw new RuntimeException("Failed to list all projects", e);
+            }
+            return projects;
+        }
+
+        @Override
+        public List<Project> findByOwnerId(final String ownerId) {
+            final String sql = "SELECT id, name, owner_id, created_at, updated_at FROM projects WHERE owner_id = ? ORDER BY created_at DESC";
+            final List<Project> projects = new ArrayList<>();
+
+            try (Connection conn = connectionManager.getReadConnection();
+                    PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, ownerId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        projects.add(mapRowToProject(rs));
+                    }
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to find projects by owner: " + ownerId, e);
             }
             return projects;
         }
@@ -203,17 +227,18 @@ public class ProjectServiceProvider {
         private Project mapRowToProject(final ResultSet rs) throws SQLException {
             final Project project = new Project(rs.getString("name"));
             project.setId(UUID.fromString(rs.getString("id")));
-            
+            project.setOwnerId(rs.getString("owner_id"));
+
             final String createdAt = rs.getString("created_at");
             if (createdAt != null) {
                 project.setCreatedAt(LocalDateTime.parse(createdAt, DATE_FORMAT));
             }
-            
+
             final String updatedAt = rs.getString("updated_at");
             if (updatedAt != null) {
                 project.setUpdatedAt(LocalDateTime.parse(updatedAt, DATE_FORMAT));
             }
-            
+
             return project;
         }
     }
@@ -223,7 +248,7 @@ public class ProjectServiceProvider {
      */
     private static class RuntimeSQLiteProjectService implements ProjectServicePort {
         private static final Logger LOG = Logger.getLogger(RuntimeSQLiteProjectService.class);
-        
+
         private final ProjectRepositoryPort repository;
         private final GraphStorage graphStorage;
 
@@ -290,7 +315,7 @@ public class ProjectServiceProvider {
      */
     private static class RuntimePostgresProjectService implements ProjectServicePort {
         private static final Logger LOG = Logger.getLogger(RuntimePostgresProjectService.class);
-        
+
         private final ProjectRepositoryPort repository;
         private final GraphStorage graphStorage;
 
